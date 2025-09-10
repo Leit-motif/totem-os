@@ -1,0 +1,352 @@
+# Overview
+**Totem OS** is a personal, cloud-first **agentic operating system**—your Daemon—with its own memory, initiative, and safe action layer. It solves the problem of fragmented thoughts and scattered knowledge by providing **seamless capture (text/voice)**, **reliable hybrid memory & retrieval**, and **proactive agents** (weekly research briefs, planning, and guarded execution).  
+Audience: a single power user (you) who wants sovereignty over data, costs, and roadmap.  
+Value: hot-swappable architecture, low ongoing cost (target **$55–$70/mo**), and a design that avoids rework if vendors or models change.
+
+# Core Features
+
+1. **Seamless Capture & Ingestion**
+
+* **What:** Save ideas, links, transcripts from web, mobile, or bridge sources (e.g., Google Drive “Capture” folder).
+* **Why:** Capture must be frictionless or the system isn’t used.
+* **How (v1):** Minimal web capture UI + Google Drive poller → `/ingest`. Optional 1-screen PWA for voice memos (MediaRecorder → upload).
+
+2. **Hybrid Memory & Retrieval**
+
+* **What:** Store everything with **dense (pgvector)** + **sparse (Typesense)** search, reranked for answer quality; cite sources.
+* **Why:** Reliability beats single-method RAG.
+* **How:** Normalize → chunk → embed → index (dense∪sparse) → rerank → answer + citations.
+
+3. **Agentic Initiative (Scout / Knowledge Garden)**
+
+* **What:** Weekly research briefs with citations + 2–3 concrete follow-ups.
+* **Why:** Moves from passive archive to proactive partner.
+* **How:** Cloud Scheduler triggers **LangGraph** job with checkpoints, rate-limited web reader, budget cap (e.g., \$3/week).
+
+4. **Guarded Actions (Concierge)**
+
+* **What:** Draft emails, create calendar blocks, add tasks—**never execute without diff + confirmation**.
+* **Why:** Trust and safety for actions that affect your life/work.
+* **How:** Persona policies and allowlists; “dry-run diff” review gate.
+
+5. **Reflection & Resurfacing (Reflector)**
+
+* **What:** Weekly digest, memory consolidation, decay/resurface of key items.
+* **Why:** Keeps the corpus alive and useful over time.
+* **How:** Summarize last week’s activity; schedule resurfacing based on importance×recency.
+
+6. **Minimal Web Workbench**
+
+* **What:** Inbox/Review queue, Search with citations, side-by-side diffs, batch approvals, Command Palette (⌘K), permalinks.
+* **Why:** Conversational UIs struggle with batch review and comparisons.
+
+7. **Observability, Evals & Cost Governance**
+
+* **What:** Traces, nightly RAG eval samples, latency SLOs, model/budget downgrades on the fly.
+* **Why:** Prevent silent regressions and surprise bills.
+* **How:** Langfuse for traces, RAGAS-style metrics, cost ceilings with degrade→stop→notify.
+
+# User Experience
+
+**Personas (modes):**
+
+* **Architect** (build/plan) • **Sage** (reflect/journal) • **Scout** (research) • **Concierge** (execute).
+  Modes change prompts, tool allowlists, and budgets—not code.
+
+**Key flows:**
+
+* **Capture:** Type in web UI or drop a note in Drive → appears in Inbox in seconds; voice PWA later.
+* **Recall:** Search or ask the Librarian → cited answers from hybrid retrieval.
+* **Review:** Weekly brief arrives → open web Workbench → compare with last week → batch approve → tasks created by Planner.
+* **Act:** Concierge proposes JSON diff for calendar/task/email draft → you confirm → execute.
+
+**UI/UX:**
+
+* Fast capture form; drag-and-drop ingest.
+* Search with top-k and inline citations.
+* Review **diff** (raw→summary→final), **batch approve**, **A/B compare**, **⌘K** palette.
+* Clear cost/budget indicators and policy explanations.
+
+  </context>
+
+<PRD>
+# Technical Architecture
+
+## System Components
+
+* **Core runtime:** **LangGraph** (Python) with durable **checkpoints** and resumability.
+* **Ports & Adapters (anti-scrap):** Stable interfaces in the core (CapturePort, IngestPort, MemoryPort, PlannerPort, ActionPort). All external services (Drive, Email, Calendar, LLMs) implemented as **adapters** calling these ports.
+* **Capability Registry (YAML):** Selects providers at runtime (LLM, embeddings, retriever, reranker, actions, capture adapters, budgets, allowlists).
+* **Evented pipeline:** `INGESTED → NORMALIZED → CHUNKED → EMBEDDED → INDEXED → SUMMARIZED → REVIEWED → PUBLISHED`.
+* **Mailbox (blackboard):** `mailbox(agent, topic, payload, priority, status)` for cross-agent handoffs (Planner↔Scout, etc.).
+* **Policy & Budgets:** Persona-based allowlists and daily/weekly dollar caps; model downgrade on threshold.
+* **Observability & evals:** Langfuse tracing, nightly RAG samples, latency SLO alerts.
+
+## Data Models
+
+**Relational:** Postgres (Cloud SQL) + `pgvector`.
+**Core tables (sketch):**
+
+* `documents(id, source, uri, mime, author, created_at, status, tags jsonb, meta jsonb)`
+* `chunks(id, doc_id, idx, text, hash)`
+* `embeddings(chunk_id, provider, model, dim, vector)`  // `vector` via pgvector
+* `entities(id, doc_id, type, value, span)`
+* `relations(id, head, predicate, tail)`
+* `notes(id, title, summary, importance, maturity, doc_id, status)`
+* `tasks(id, title, agent, due_at, status, payload jsonb)`
+* **State/versioning:** `runs`, `checkpoints`, `artifacts`, `mailbox`, `prompts`, `tool_defs`
+
+**Objects:** GCS for raw artifacts (`.md/.json/.pdf/.wav`) with **versioning** enabled.
+
+## APIs & Integrations
+
+**Public REST (serverless on Cloud Run):**
+
+* `POST /save_note` → {title, body, tags?, source?} → Inbox
+* `POST /ingest` → {source, mime, content|url, metadata} → pipeline
+* `GET /query?q&k` → hybrid search with citations
+* `GET /review/items` • `POST /review/publish`
+* `POST /tasks` • `GET /tasks`
+
+**Adapters (behind ports):**
+
+* **Capture:** Google Drive Poller (bridge) → `IngestPort.enqueue`; Web UI → `/save_note`; optional Email-to-Totem.
+* **LLM Router:** **LiteLLM Proxy** (Cloud Run) for multi-vendor model routing & budgets.
+* **Embeddings:** OpenAI `text-embedding-3-small` (nightly batches).
+* **Sparse search:** **Typesense** (Cloud Run) for BM25/keyword; **OpenSearch** optional if BM25+RRF needed.
+* **Reranker:** BGE cross-encoder (Cloud Run or HF Inference).
+* **STT (optional):** `faster-whisper` (Cloud Run GPU) for batch transcription from PWA audio.
+* **Actions:** Gmail (draft), Google Calendar (create block), Todoist (tasks) with **dry-run diffs**; execute only on confirm.
+* **MCP:** **Optional future** adapter to call external MCP servers and (later) expose Totem as MCP server; **not required for MVP**.
+
+## Infrastructure Requirements (GCP-first)
+
+* **Compute:** Cloud Run (API, adapters, LangGraph workers), Cloud Run Jobs (batch/cron).
+* **Scheduling:** Cloud Scheduler → triggers Scout/Reflector.
+* **DB:** Cloud SQL Postgres (+ pgvector); nightly backups.
+* **Storage:** GCS with object **versioning** and lifecycle (archive after 12 months).
+* **Secrets & IAM:** Secret Manager; least-privilege service accounts per adapter/tool.
+* **Notifications:** Firebase Cloud Messaging (web push) + email digests.
+* **CI/CD:** GitHub Actions → gcloud deploy to Cloud Run; optional Cloud Build for tests.
+* **Logging/Monitoring:** Cloud Logging + Langfuse.
+
+---
+
+# Development Roadmap
+
+## Phase 1 — **Kernel: State & Memory (MVP foundation)**
+
+**Scope:**
+
+* Monorepo scaffold; Docker; CI.
+* Capability Registry loader; port interfaces (TS/Python).
+* Postgres schema + `pgvector`; GCS writer.
+* **Hybrid retrieval** path (pgvector + Typesense) with reranker.
+* LangGraph pipeline: normalize → chunk → embed → summarize → publish.
+* REST: `POST /save_note`, `POST /ingest`, `GET /query`.
+* **Drive Poller** adapter (capture bridge).
+* Checkpoints + **idempotency**; resume on restart.
+
+**Acceptance:**
+
+* Saving text or dropping a file in Drive yields a **searchable** doc with citations.
+* Kill a running job; restart resumes from last checkpoint (verified via `runs/checkpoints`).
+
+## Phase 2 — **Interface: Web Workbench**
+
+**Scope:**
+
+* Next.js PWA: Inbox/Review, Search, **diff view**, **batch approve**, **⌘K palette**, permalinks.
+* Notifications: email digest + optional web push (“Brief ready”, “Budget reached”).
+* Display cost/budget status.
+
+**Acceptance:**
+
+* Approve 10 review items in ≤4 clicks.
+* Inbox write latency < 2s for `/save_note` requests.
+
+## Phase 3 — **Initiative & Policy: Scout + Governors**
+
+**Scope:**
+
+* Scout agent: crawl → extract → cluster → synthesize w/ citations.
+* Cloud Scheduler weekly trigger; **budget cap (e.g., \$3)**; domain allowlist; rate limits.
+* Policy engine (YAML): persona allowlists + daily budgets; **auto-downgrade** models when hitting ceilings.
+* Live token/latency meter; SLOs: Search P50 < 2.5s; Answer P95 < 8s (rolling window).
+
+**Acceptance:**
+
+* Weekly brief placed in Review under budget, with sources.
+* Disallowed tool in current mode returns clear policy explanation.
+* On budget hit: degrade → stop → notify.
+
+## Phase 4 — **Execution & Reflection: Concierge, Planner, Reflector**
+
+**Scope:**
+
+* Concierge: **draft-only** email, calendar block, tasks; **dry-run diffs**; confirm gate.
+* Planner: convert approved briefs into tasks; posts `research.followup` to mailbox for Scout.
+* Reflector: weekly digest + top 3 resurfacings; memory decay scores.
+
+**Acceptance:**
+
+* Concierge shows exact JSON change before execution; runs only on confirm.
+* Planner↔Scout handoff via mailbox works end-to-end.
+* Reflector emits digest + resurfacings.
+
+## Future Enhancements (non-blocking)
+
+* **MCP adapters** (client/server) when accessible/valuable.
+* Voice PWA (MediaRecorder → `/ingest`) + **faster-whisper** batch STT.
+* richer Knowledge Graph views; entity linking improvements.
+* Model routing policies (LiteLLM) by task class; open-source embedder swap (e.g., Nomic).
+* Local GPU/Edge mode for STT/rerank if cost/latency demand.
+
+---
+
+# Logical Dependency Chain
+
+1. **Foundation:** DB schema, GCS, Capability Registry, core ports, pipeline checkpoints/idempotency.
+2. **Memory online:** ingest→publish→query (hybrid retrieval + rerank).
+3. **Capture working:** Drive Poller + `/save_note` → Inbox (fast feedback loop).
+4. **Workbench visible:** Review/search UI so you can dogfood immediately.
+5. **Initiative & safety:** Scout with budgets, policy engine, cost governors.
+6. **Actions & reflection:** Concierge/Planner/Reflector; mailbox for agent handoffs.
+7. **Optional voice & MCP:** plug-in adapters without touching the core.
+
+---
+
+# Risks and Mitigations
+
+* **State complexity / retries:** Use LangGraph checkpoints, idempotency keys, and saga-style compensations for partial publishes.
+* **Capture friction:** Minimal web capture + Drive Poller now; PWA voice later. Keep write latency < 2s.
+* **Cost creep:** Budgets per persona; model auto-downgrade; batch embeddings nightly; rate-limit Scout and web reader.
+* **Vendor shifts / lock-in:** Strict ports/adapters + Capability Registry; swap LLMs/vector backends without core changes.
+* **Scraper bans:** Domain allowlists; polite rate limits; robots.txt compliance; exponential backoff.
+* **Privacy/PII:** Normalizer tags PII; redact before sending to external tools; secrets in Secret Manager; least-privilege IAM.
+* **UI scope creep:** Keep V1 workbench focused on Inbox/Review/Search; defer fancy graphs until memory is consistently valuable.
+
+---
+
+# Appendix
+
+## A) Capability & Policy Registry (sample)
+
+```yaml
+llm: { provider: openai, model: gpt-4o-mini }
+embedder: { provider: openai, model: text-embedding-3-small, batch: nightly }
+retriever: { dense: pgvector, sparse: typesense }
+reranker: { provider: bge, model: BAAI/bge-reranker-v2-m3 }
+capture:
+  - rest:/save_note
+  - poller:google_drive://totem-capture
+actions:
+  mail: gmail.draft
+  calendar: gcal.create_block
+  tasks: todoist.add
+policy:
+  budgets: { daily_usd: 2.0, scout_weekly_usd: 3.0 }
+  allowlist:
+    architect: [tasks.add]
+    sage: []
+    scout: []
+    concierge: [calendar.create_block, tasks.add, mail.draft]  # no send
+notifications:
+  email_digest: true
+  web_push: true
+```
+
+## B) Core Port Interfaces (TypeScript sketch)
+
+```ts
+export interface CapturePort {
+  saveNote(i:{title:string; body:string; tags?:string[]; source?:string}): Promise<{docId:string}>;
+}
+export interface IngestPort {
+  enqueue(i:{source:string; mime:string; content?:string; url?:string; meta?:any}): Promise<{docId:string}>;
+}
+export interface MemoryPort {
+  searchHybrid(q:string, k:number): Promise<Array<{id:string;text:string;score:number;source:string;uri?:string}>>;
+}
+export interface PlannerPort {
+  createTasks(t:Array<{title:string;payload?:any;dueAt?:string}>): Promise<string[]>;
+}
+export interface ActionPort {
+  previewAndConfirm(spec:any): Promise<{diff:any;executed:boolean}>;
+}
+```
+
+## C) SQL DDL (extract)
+
+```sql
+-- enable extension
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE documents(
+  id uuid PRIMARY KEY, source text, uri text, mime text, author text,
+  created_at timestamptz DEFAULT now(),
+  status text CHECK (status IN ('inbox','review','published')) DEFAULT 'inbox',
+  tags jsonb, meta jsonb
+);
+
+CREATE TABLE chunks(
+  id uuid PRIMARY KEY, doc_id uuid REFERENCES documents(id) ON DELETE CASCADE,
+  idx int, text text, hash text
+);
+
+CREATE TABLE embeddings(
+  chunk_id uuid PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+  provider text, model text, dim int, vector vector(1536)
+);
+
+CREATE TABLE entities(
+  id uuid PRIMARY KEY, doc_id uuid REFERENCES documents(id) ON DELETE CASCADE,
+  type text, value text, span int4range
+);
+
+CREATE TABLE relations(
+  id uuid PRIMARY KEY, head uuid REFERENCES entities(id),
+  predicate text, tail uuid REFERENCES entities(id)
+);
+
+CREATE TABLE notes(
+  id uuid PRIMARY KEY, title text, summary text,
+  importance int, maturity text CHECK (maturity IN ('seed','sapling','tree')),
+  doc_id uuid REFERENCES documents(id),
+  status text CHECK (status IN ('inbox','review','published')) DEFAULT 'inbox'
+);
+
+CREATE TABLE tasks(
+  id uuid PRIMARY KEY, title text, agent text, due_at timestamptz,
+  status text CHECK (status IN ('todo','doing','done','cancelled')) DEFAULT 'todo',
+  payload jsonb
+);
+
+-- durable execution
+CREATE TABLE runs(id uuid PRIMARY KEY, agent text, started_at timestamptz, status text, meta jsonb);
+CREATE TABLE checkpoints(id uuid PRIMARY KEY, run_id uuid REFERENCES runs(id), step text, input_hash text, outputs jsonb, artifacts_uri text, created_at timestamptz DEFAULT now());
+CREATE TABLE mailbox(id uuid PRIMARY KEY, agent text, topic text, payload jsonb, priority int, status text, created_at timestamptz DEFAULT now());
+CREATE TABLE prompts(name text, version int, body text, checksum text, PRIMARY KEY(name, version));
+CREATE TABLE tool_defs(name text, version int, schema jsonb, PRIMARY KEY(name, version));
+```
+
+## D) SLOs & Evals
+
+* **SLOs:** Search P50 < 2.5s; Answer P95 < 8s; Inbox write < 2s.
+* **Nightly evals:** 10–20 sampled Q\&A from your corpus; track answer faithfulness, context precision/recall, latency; regression alerts.
+
+## E) Cost Targets (solo use)
+
+* Cloud Run + Cloud SQL (tiny) + GCS + Scheduler + Typesense: **\$35–\$60**.
+* Embeddings (nightly batch): **\$5–\$10**.
+* Optional STT (batch): **\$5–\$10**.
+* **Total target:** **\$55–\$70/mo**.
+
+## F) Capture & Web Reader Rate Limits
+
+* Per-domain crawl caps, exponential backoff, robots.txt respect.
+* `/ingest_url` quota per day; alerts on spike.
+
+## G) MCP Position
+
+* **Not required** for MVP. Totem can later **call other MCPs** and/or **expose** its own MCP server when accessible; add as an adapter without core changes.

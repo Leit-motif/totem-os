@@ -1,0 +1,10 @@
+[project]
+name = "totem-api"
+version = "0.0.1"
+description = "Totem OS API (LangGraph placeholder)"
+requires-python = ">=3.10"
+
+[project.scripts]
+totem-api = "api.main:main"
+
+

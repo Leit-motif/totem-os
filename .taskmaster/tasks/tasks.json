@@ -1,0 +1,380 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": 1,
+        "title": "Setup Project Repository and Infrastructure",
+        "description": "Initialize monorepo scaffold with Docker configuration and CI pipeline for the Totem OS project",
+        "details": "Create a monorepo structure with separate directories for backend (Python/LangGraph), frontend (Next.js), and shared types. Setup Docker configuration for local development and deployment. Configure GitHub Actions for CI/CD pipeline that deploys to GCP Cloud Run. Include linting, testing, and deployment stages. Setup IAM roles and service accounts with least-privilege principles. Initialize Secret Manager for storing sensitive credentials.",
+        "testStrategy": "Verify Docker builds successfully locally. Ensure CI pipeline runs on PR and successfully deploys to a development environment. Validate that secrets are properly managed and not exposed in the repository.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Initialize Monorepo Structure",
+            "description": "Create the monorepo scaffold with directories for backend (apps/api), frontend (apps/web), and shared packages (packages/*), ensuring compatibility with Windows development environments.",
+            "dependencies": [],
+            "details": "Set up the root directory with apps/api for Python/LangGraph, apps/web for Next.js, and packages for shared types/utilities. Use pnpm workspaces or similar for dependency management. Add Windows-friendly scripts where needed.\n<info added on 2025-09-10T23:33:26.930Z>\n# Implementation Plan for Subtask 1.1: Initialize Monorepo Structure\n\n## Goal\nCreate the base monorepo scaffold for Totem OS with clear directories for backend (Python/LangGraph), frontend (Next.js), and shared packages, ensuring Windows compatibility and ease of CI/CD.\n\n## Target Structure (first pass)\n- /apps\n  - /api                # Python (LangGraph) service(s)\n  - /web                # Next.js PWA (foundation to be added later)\n- /packages\n  - /shared             # Shared TypeScript types/utils (later)\n  - /config             # Shared configs (eslint, prettier, tsconfig)\n- /.github/workflows    # CI later in task 1.5\n- /scripts              # helper scripts (PowerShell + bash where relevant)\n- pnpm-workspace.yaml   # Node workspace definition\n- package.json          # root scripts and dev tooling\n- README.md             # initial doc (will be expanded in 1.2)\n- .editorconfig         # in 1.2\n- .gitignore            # in 1.2\n\n## Decisions\n- Node workspace manager: pnpm (fast, workspace-native). Root-only install; per-app lockfiles optional but we'll start with a single root lockfile.\n- Python env: uv (fast and simple) OR Poetry; choose uv for speed initially, can switch later without repo churn. Use per-app virtual envs (apps/api/.venv) to keep isolation clear on Windows.\n- Keep this step code-light: just the scaffolding and minimal placeholders.\n\n## Concrete Steps\n1) Create directories: apps/api, apps/web, packages/shared, packages/config, scripts, .github/workflows\n2) Create root pnpm workspace config:\n   - pnpm-workspace.yaml with packages: [\"apps/*\", \"packages/*\"]\n   - Root package.json with scripts:\n     - \"dev:web\": \"pnpm -C apps/web dev\"\n     - \"dev:api\": \"powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev_api.ps1\" (Windows) and bash equivalent later\n     - \"format\": \"prettier -w .\" (will wire in 1.3)\n3) apps/web placeholder:\n   - package.json with name @totem/web (Next.js will be bootstrapped later in Task 10)\n4) apps/api placeholder:\n   - pyproject.toml (uv/PEP 621), src/api/__init__.py, src/api/main.py with a hello endpoint placeholder (real API wired later)\n   - .python-version optional; on Windows, rely on uv installing to .venv\n5) packages/config placeholder:\n   - eslint base, prettier config, tsconfig base (files stubbed, filled in task 1.3)\n6) scripts:\n   - scripts/dev_api.ps1 to run uv venv + uv run `python -m api.main` (placeholder)\n   - scripts/dev_api.sh for non-Windows devs\n\n## Windows Notes\n- Prefer PowerShell scripts (.ps1) with ExecutionPolicy guidance in README (Set-ExecutionPolicy -Scope Process Bypass)\n- Docker Desktop notes are deferred to 1.4 but keep port selections consistent (e.g., API 8000)\n\n## Acceptance Criteria\n- Directories and placeholder files exist as per structure\n- `pnpm -w list` recognizes apps/* and packages/* as workspaces\n- Running `pwsh scripts/dev_api.ps1` prints/serves a placeholder (e.g., hello)\n- No toolchain/pinning yet beyond what's necessary to keep next steps smooth\n\n## Follow-ups (deferred to later subtasks)\n- Fill .editorconfig/.gitignore/README (1.2)\n- Linting/formatting and pre-commit (1.3)\n- Dockerfiles (1.4)\n- CI/CD workflows (1.5)\n</info added on 2025-09-10T23:33:26.930Z>",
+            "status": "done",
+            "testStrategy": "Verify all directories exist and can be opened in editors. Confirm pnpm or workspace tool recognizes all packages."
+          },
+          {
+            "id": 2,
+            "title": "Configure Base Toolchains and Project Files",
+            "description": "Set up base Python (Poetry or uv) and Node (pnpm) toolchains, and add .editorconfig, .gitignore, and initial README.md at the repo root.",
+            "dependencies": [
+              "1.1"
+            ],
+            "details": "Initialize pyproject.toml or poetry/uv config in apps/api, and package.json in apps/web and packages. Add .editorconfig and .gitignore with patterns for Python, Node, and OS-specific files. Write a minimal README with project structure and setup instructions.",
+            "status": "done",
+            "testStrategy": "Run 'poetry install' or 'uv pip install' and 'pnpm install' in respective directories. Confirm .editorconfig and .gitignore are present and effective."
+          },
+          {
+            "id": 3,
+            "title": "Add Pre-commit Hooks and Linting/Formatting",
+            "description": "Configure pre-commit hooks for Black, isort, Ruff (Python), and ESLint, Prettier (Node), ensuring cross-platform compatibility.",
+            "dependencies": [
+              "1.2"
+            ],
+            "details": "Set up pre-commit config in the repo root to run Python and Node linters/formatters. Add scripts for Windows (e.g., .bat files) if needed. Document usage in README.",
+            "status": "pending",
+            "testStrategy": "Run pre-commit locally and verify that staged files are linted/formatted. Confirm no errors on Windows and Unix systems."
+          },
+          {
+            "id": 4,
+            "title": "Create Dockerfiles for API and Worker Services",
+            "description": "Write Dockerfiles for the Python API (LangGraph) and any worker services, optimized for local development and GCP deployment.",
+            "dependencies": [
+              "1.2"
+            ],
+            "details": "Place Dockerfiles in apps/api and any worker directories. Use multi-stage builds for efficiency. Add Windows notes for Docker Desktop setup.",
+            "status": "pending",
+            "testStrategy": "Build and run containers locally on Windows and Unix. Confirm services start and expose expected ports."
+          },
+          {
+            "id": 5,
+            "title": "Setup GitHub Actions CI/CD Pipeline",
+            "description": "Configure GitHub Actions workflows for linting, testing, and deploying both Python and Node apps to GCP Cloud Run.",
+            "dependencies": [
+              "1.3",
+              "1.4"
+            ],
+            "details": "Create .github/workflows with jobs for Node and Python, including build, lint, test, and deploy stages. Use GCP service account credentials via GitHub Secrets. Add notes for Windows runners if needed.",
+            "status": "pending",
+            "testStrategy": "Push a test PR and verify CI runs all jobs, fails on lint/test errors, and deploys to a test Cloud Run service on merge."
+          },
+          {
+            "id": 6,
+            "title": "Stub GCP Project and Environment Configuration",
+            "description": "Add base GCP setup stubs: gcloud auth instructions, project/env files, and placeholders for Cloud Run, Jobs, Scheduler, Cloud SQL, and GCS.",
+            "dependencies": [
+              "1.5"
+            ],
+            "details": "Document gcloud auth steps for Windows and Unix. Add .env.example files for each app. Create stub YAMLs or markdown for GCP resources to be provisioned later.",
+            "status": "pending",
+            "testStrategy": "Verify documentation is clear and .env.example files are present. Confirm developers can authenticate with gcloud and set up local env files."
+          },
+          {
+            "id": 7,
+            "title": "Configure IAM Roles and Service Accounts",
+            "description": "Set up GCP IAM roles and service accounts with least-privilege principles for CI/CD and runtime, and document their usage.",
+            "dependencies": [
+              "1.6"
+            ],
+            "details": "Create and document service accounts for GitHub Actions and app runtime. Assign minimal required roles for Cloud Run, Cloud SQL, GCS, and Secret Manager. Store service account keys securely.",
+            "status": "pending",
+            "testStrategy": "Test deployment with the configured service accounts. Confirm no excessive permissions and that all required GCP APIs are accessible."
+          },
+          {
+            "id": 8,
+            "title": "Initialize Secret Manager Integration",
+            "description": "Set up GCP Secret Manager for storing sensitive credentials and configure access from both local development and CI/CD.",
+            "dependencies": [
+              "1.7"
+            ],
+            "details": "Create initial secrets in GCP Secret Manager. Add code/config stubs in apps/api and apps/web for loading secrets. Document secret usage and access patterns.",
+            "status": "pending",
+            "testStrategy": "Verify secrets are not committed to the repo. Test secret retrieval locally and in CI/CD by deploying a test app that reads a secret."
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Implement Core Database Schema",
+        "description": "Create Postgres database schema with pgvector extension for the core data models",
+        "details": "Set up Cloud SQL Postgres instance with pgvector extension. Implement the database schema as defined in the PRD's SQL DDL section, including tables for documents, chunks, embeddings, entities, relations, notes, tasks, runs, checkpoints, mailbox, prompts, and tool_defs. Configure nightly backups. Create migration scripts for schema changes. Set up connection pooling for efficient database access.",
+        "testStrategy": "Execute migration scripts in a test environment. Verify all tables are created with correct constraints. Test vector operations with pgvector. Validate backup and restore procedures.",
+        "priority": "high",
+        "dependencies": [
+          1
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 3,
+        "title": "Develop Capability Registry",
+        "description": "Create a YAML-based capability registry for runtime selection of providers and services",
+        "details": "Implement a YAML parser and validator for the Capability Registry as shown in Appendix A. Create a singleton registry service that loads configuration at startup and provides access to capabilities throughout the application. Include support for LLM providers, embedders, retrievers, rerankers, capture methods, actions, policies, budgets, and notifications. Implement validation logic to ensure configuration is complete and consistent.",
+        "testStrategy": "Unit test with various valid and invalid YAML configurations. Verify that the registry correctly loads and provides access to all capability types. Test error handling for missing or invalid configurations.",
+        "priority": "high",
+        "dependencies": [
+          1
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 4,
+        "title": "Implement Core Port Interfaces",
+        "description": "Define and implement the core port interfaces for the system's modular architecture",
+        "details": "Create TypeScript and Python interfaces for all core ports as defined in Appendix B: CapturePort, IngestPort, MemoryPort, PlannerPort, and ActionPort. Implement abstract base classes for each port. Create a port registry that allows runtime binding of concrete implementations to port interfaces. Ensure all ports follow the same error handling and logging patterns.",
+        "testStrategy": "Create mock implementations of each port for testing. Verify that concrete implementations can be registered and retrieved at runtime. Test error propagation and handling across port boundaries.",
+        "priority": "high",
+        "dependencies": [
+          1,
+          3
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 5,
+        "title": "Setup GCS Storage and Object Versioning",
+        "description": "Configure Google Cloud Storage for raw artifacts with versioning enabled",
+        "details": "Create GCS buckets for storing raw artifacts (.md/.json/.pdf/.wav) with object versioning enabled. Implement a GCSWriter adapter that implements a storage port interface. Configure lifecycle policies to archive objects after 12 months. Implement methods for storing, retrieving, and listing objects with version awareness. Create signed URL generation for temporary access to objects.",
+        "testStrategy": "Test uploading, retrieving, and versioning objects. Verify that older versions can be accessed. Test lifecycle policies with time-shifted testing. Validate signed URL generation and access control.",
+        "priority": "high",
+        "dependencies": [
+          1
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 6,
+        "title": "Implement LangGraph Pipeline with Checkpoints",
+        "description": "Create the core LangGraph pipeline with durable checkpoints and resumability",
+        "details": "Implement a LangGraph-based pipeline with the stages: INGESTED → NORMALIZED → CHUNKED → EMBEDDED → INDEXED → SUMMARIZED → REVIEWED → PUBLISHED. Create checkpoint mechanisms that store state in the checkpoints table after each stage. Implement idempotency keys to prevent duplicate processing. Create a resume mechanism that can restart processing from the last successful checkpoint. Implement error handling and compensation logic for partial failures.",
+        "testStrategy": "Test the pipeline with various document types. Verify checkpoints are created at each stage. Test resumability by artificially failing the pipeline and ensuring it resumes correctly. Validate idempotency by submitting the same document multiple times.",
+        "priority": "high",
+        "dependencies": [
+          2,
+          4,
+          5
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 7,
+        "title": "Implement Hybrid Retrieval System",
+        "description": "Create a hybrid retrieval system combining dense (pgvector) and sparse (Typesense) search with reranking",
+        "details": "Set up Typesense on Cloud Run for sparse/keyword search. Implement a hybrid retrieval system that queries both pgvector (dense) and Typesense (sparse) indices. Create a reranker using BGE cross-encoder deployed on Cloud Run. Implement reciprocal rank fusion to combine results from dense and sparse search. Add citation extraction to include source information with search results. Optimize for the SLO of Search P50 < 2.5s.",
+        "testStrategy": "Benchmark retrieval performance with various query types. Test with a corpus of documents to verify retrieval quality. Measure latency to ensure SLO compliance. Validate citation accuracy against source documents.",
+        "priority": "high",
+        "dependencies": [
+          2,
+          3,
+          6
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 8,
+        "title": "Implement REST API Core Endpoints",
+        "description": "Develop the core REST API endpoints for saving notes, ingestion, and querying",
+        "details": "Create a Cloud Run service for the REST API. Implement the following endpoints: POST /save_note for direct note creation, POST /ingest for document ingestion, and GET /query for hybrid search with citations. Use OpenAPI/Swagger for API documentation. Implement rate limiting, authentication, and input validation. Ensure all endpoints follow RESTful principles and return appropriate status codes.",
+        "testStrategy": "Create automated API tests for each endpoint. Test with various input types and edge cases. Verify rate limiting and authentication. Measure latency to ensure it meets SLOs (especially Inbox write < 2s).",
+        "priority": "high",
+        "dependencies": [
+          4,
+          6,
+          7
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 9,
+        "title": "Develop Google Drive Poller Adapter",
+        "description": "Create an adapter to poll a Google Drive folder for new documents to ingest",
+        "details": "Implement a Google Drive Poller that monitors a designated 'Capture' folder for new files. Use Google Drive API with webhook notifications or polling. When new files are detected, call IngestPort.enqueue to add them to the processing pipeline. Handle various file types (text, PDF, images with text). Implement deduplication to avoid processing the same file multiple times. Configure as a Cloud Run service with appropriate IAM permissions.",
+        "testStrategy": "Test with various file types added to the Drive folder. Verify files are correctly ingested and processed. Test deduplication by adding the same file multiple times. Measure end-to-end latency from file addition to appearance in the system.",
+        "priority": "medium",
+        "dependencies": [
+          4,
+          6,
+          8
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 10,
+        "title": "Implement Next.js Web Workbench Foundation",
+        "description": "Create the foundation for the Next.js PWA web workbench",
+        "details": "Set up a Next.js project with TypeScript for the web workbench. Implement the core UI components: layout, navigation, and authentication. Create responsive design that works on desktop and mobile. Implement the Command Palette (⌘K) for quick actions. Set up API client for communicating with the backend REST API. Configure as a PWA with offline capabilities. Deploy to Cloud Run with proper CORS configuration.",
+        "testStrategy": "Test responsive design across device sizes. Verify Command Palette functionality. Test offline capabilities. Ensure proper authentication flow. Validate API client with mock backend.",
+        "priority": "medium",
+        "dependencies": [
+          8
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 11,
+        "title": "Develop Inbox and Review UI Components",
+        "description": "Create UI components for the Inbox and Review functionality in the web workbench",
+        "details": "Implement Inbox UI showing recently captured items with status indicators. Create Review UI with diff view for comparing raw, summary, and final versions. Implement batch approval functionality allowing multiple items to be approved with minimal clicks. Add permalinks for sharing specific items. Create filters and sorting options for the inbox. Implement optimistic UI updates for better user experience.",
+        "testStrategy": "Test batch approval with various numbers of items, ensuring it meets the requirement of approving 10 items in ≤4 clicks. Verify diff view correctly shows differences. Test permalinks for sharing. Validate filters and sorting.",
+        "priority": "medium",
+        "dependencies": [
+          10
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 12,
+        "title": "Implement Search UI with Citations",
+        "description": "Create the search interface with citation display in the web workbench",
+        "details": "Implement search UI with query input, filters, and result display. Show search results with inline citations linking to source documents. Display relevance scores and highlight matching terms. Implement pagination or infinite scrolling for large result sets. Add ability to refine search results. Create detailed view for examining individual results with full context.",
+        "testStrategy": "Test search with various query types. Verify citations are correctly displayed and linked. Test pagination/infinite scrolling with large result sets. Measure search latency to ensure it meets SLO (P50 < 2.5s).",
+        "priority": "medium",
+        "dependencies": [
+          7,
+          10
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 13,
+        "title": "Implement Notification System",
+        "description": "Create notification system for email digests and web push notifications",
+        "details": "Set up Firebase Cloud Messaging for web push notifications. Implement email digest generation and delivery. Create notification preferences UI in the web workbench. Implement notification triggers for events like 'Brief ready' and 'Budget reached'. Create a notification queue to ensure reliable delivery. Implement notification templates for different event types.",
+        "testStrategy": "Test web push notifications across browsers. Verify email digests are correctly formatted and delivered. Test notification preferences are respected. Validate that all notification triggers work correctly.",
+        "priority": "low",
+        "dependencies": [
+          10,
+          11
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 14,
+        "title": "Implement Scout Agent with LangGraph",
+        "description": "Develop the Scout agent for proactive research with budget controls",
+        "details": "Implement Scout agent using LangGraph with steps: crawl → extract → cluster → synthesize with citations. Create a Cloud Scheduler trigger for weekly execution. Implement budget cap (e.g., $3) with tracking and enforcement. Add domain allowlist for crawling and rate limiting. Implement polite web reader with robots.txt compliance and exponential backoff. Store research briefs in the database for review.",
+        "testStrategy": "Test end-to-end research brief generation. Verify budget cap enforcement by simulating high usage. Test domain allowlist and rate limiting. Validate that generated briefs include proper citations. Measure resource usage to ensure efficiency.",
+        "priority": "medium",
+        "dependencies": [
+          6,
+          7,
+          8
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 15,
+        "title": "Develop Policy Engine",
+        "description": "Create a policy engine for persona-based allowlists and budget controls",
+        "details": "Implement a policy engine based on YAML configuration that enforces persona allowlists and budget constraints. Create model auto-downgrade logic when approaching budget ceilings. Implement clear policy explanations when actions are disallowed. Create a token/cost tracking system that monitors usage in real-time. Implement budget alerts and notifications when thresholds are approached or exceeded.",
+        "testStrategy": "Test policy enforcement with various personas and actions. Verify model auto-downgrade works correctly when budget thresholds are reached. Test policy explanations for clarity. Validate budget tracking accuracy against actual API usage.",
+        "priority": "medium",
+        "dependencies": [
+          3,
+          13,
+          14
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 16,
+        "title": "Implement Concierge Agent",
+        "description": "Develop the Concierge agent for guarded actions with diff review",
+        "details": "Implement Concierge agent for draft-only actions: email, calendar blocks, and tasks. Create dry-run diff generation for all actions, showing exactly what will change. Implement confirmation gate requiring explicit approval before execution. Connect to Gmail, Google Calendar, and Todoist through adapters. Ensure all actions respect persona allowlists from the policy engine.",
+        "testStrategy": "Test draft generation for each action type. Verify diff display accurately shows changes. Test confirmation gate prevents execution without approval. Validate that actions respect persona allowlists. Test with various input formats and edge cases.",
+        "priority": "medium",
+        "dependencies": [
+          6,
+          15
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 17,
+        "title": "Develop Planner Agent",
+        "description": "Create the Planner agent to convert approved briefs into tasks",
+        "details": "Implement Planner agent that processes approved research briefs and converts them into actionable tasks. Create mailbox integration for cross-agent handoffs, posting research.followup messages to Scout. Implement task prioritization logic. Create task templates for different types of follow-up actions. Ensure tasks are created in the appropriate external system (e.g., Todoist) through the Concierge.",
+        "testStrategy": "Test end-to-end flow from approved brief to created tasks. Verify mailbox handoff between Planner and Scout. Test task prioritization with various inputs. Validate that created tasks match the intent of the research brief.",
+        "priority": "medium",
+        "dependencies": [
+          14,
+          16
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 18,
+        "title": "Implement Reflector Agent",
+        "description": "Develop the Reflector agent for weekly digests and memory consolidation",
+        "details": "Implement Reflector agent that generates weekly digests of system activity. Create memory consolidation logic that identifies important items for resurfacing. Implement decay/resurface algorithms based on importance×recency. Schedule weekly execution via Cloud Scheduler. Generate top 3 resurfacings with each digest. Create email template for digest delivery.",
+        "testStrategy": "Test weekly digest generation with various activity patterns. Verify resurfacing algorithm correctly identifies important items. Test decay logic over simulated time periods. Validate email digest format and delivery.",
+        "priority": "low",
+        "dependencies": [
+          14,
+          15
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 19,
+        "title": "Implement Observability and Evaluation System",
+        "description": "Create observability infrastructure and nightly evaluation pipeline",
+        "details": "Set up Langfuse for tracing LLM interactions. Implement nightly RAG evaluation samples using RAGAS-style metrics. Create latency SLO monitoring and alerting. Implement cost tracking and reporting. Create dashboards for system performance and health. Set up logging with structured formats for easier analysis. Implement regression detection for answer quality.",
+        "testStrategy": "Verify traces are correctly captured in Langfuse. Test evaluation pipeline with known-good and known-bad examples. Validate SLO monitoring by simulating slow responses. Test cost tracking accuracy against actual billing data.",
+        "priority": "medium",
+        "dependencies": [
+          6,
+          7,
+          14,
+          16,
+          18
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 20,
+        "title": "Implement Cost Governance System",
+        "description": "Develop a system for monitoring and controlling costs across all components",
+        "details": "Create a cost governance system that tracks usage across all paid services (LLMs, embeddings, etc.). Implement budget caps with automatic model downgrade when thresholds are approached. Create a cost dashboard in the web workbench. Implement cost projections based on usage patterns. Set up alerts for unusual spending patterns. Create detailed cost breakdowns by component and feature.",
+        "testStrategy": "Test budget cap enforcement by simulating high usage. Verify model downgrade works correctly. Validate cost tracking accuracy against actual billing data. Test alerts for unusual spending patterns with simulated usage spikes.",
+        "priority": "high",
+        "dependencies": [
+          15,
+          19
+        ],
+        "status": "pending",
+        "subtasks": []
+      }
+    ],
+    "metadata": {
+      "created": "2025-09-10T23:30:30.057Z",
+      "updated": "2025-09-10T23:38:36.953Z",
+      "description": "Tasks for master context"
+    }
+  }
+}
