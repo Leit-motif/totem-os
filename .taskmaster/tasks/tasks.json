@@ -35,7 +35,7 @@
             "description": "Configure pre-commit hooks for Black, isort, Ruff (Python), and ESLint, Prettier (Node), ensuring cross-platform compatibility.",
             "dependencies": ["1.2"],
             "details": "Set up pre-commit config in the repo root to run Python and Node linters/formatters. Add scripts for Windows (e.g., .bat files) if needed. Document usage in README.",
-            "status": "in-progress",
+            "status": "done",
             "testStrategy": "Run pre-commit locally and verify that staged files are linted/formatted. Confirm no errors on Windows and Unix systems."
           },
           {
@@ -44,7 +44,7 @@
             "description": "Write Dockerfiles for the Python API (LangGraph) and any worker services, optimized for local development and GCP deployment.",
             "dependencies": ["1.2"],
             "details": "Place Dockerfiles in apps/api and any worker directories. Use multi-stage builds for efficiency. Add Windows notes for Docker Desktop setup.",
-            "status": "pending",
+            "status": "in-progress",
             "testStrategy": "Build and run containers locally on Windows and Unix. Confirm services start and expose expected ports."
           },
           {
@@ -297,7 +297,7 @@
     ],
     "metadata": {
       "created": "2025-09-10T23:30:30.057Z",
-      "updated": "2025-09-10T23:44:16.389Z",
+      "updated": "2025-09-10T23:53:03.433Z",
       "description": "Tasks for master context"
     }
   }
