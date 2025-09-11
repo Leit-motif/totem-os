@@ -32,3 +32,5 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
 - Add linting/formatting and pre-commit hooks
 - Add Dockerfiles
 - Configure CI/CD workflows
+
+# Test trigger
