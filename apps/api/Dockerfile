@@ -11,6 +11,9 @@ COPY apps/api/src ./apps/api/src
 # Ensure Python can import the api package
 ENV PYTHONPATH=/app/apps/api/src
 
+# Expose port 8080 for Cloud Run
+EXPOSE 8080
+
 CMD ["python", "-m", "api.main"]
 
 

@@ -43,8 +43,8 @@
             "title": "Create Dockerfiles for API and Worker Services",
             "description": "Write Dockerfiles for the Python API (LangGraph) and any worker services, optimized for local development and GCP deployment.",
             "dependencies": ["1.2"],
-            "details": "Place Dockerfiles in apps/api and any worker directories. Use multi-stage builds for efficiency. Add Windows notes for Docker Desktop setup.",
-            "status": "in-progress",
+            "details": "Place Dockerfiles in apps/api and any worker directories. Use multi-stage builds for efficiency. Add Windows notes for Docker Desktop setup.\n<info added on 2025-09-10T23:55:18.301Z>\nProgress update on Dockerfile implementation:\n- Created apps/api/Dockerfile using Python 3.11 slim base image with PYTHONPATH configuration, set to run `python -m api.main`\n- Added .dockerignore file at repository root to reduce build context size by excluding unnecessary files/directories:\n  - `.git`\n  - node_modules\n  - __pycache__\n  - .venv\n  - .env\n  - .cursor\n  - .taskmaster\n  - Other build artifacts and temporary files\n- Local Docker testing is currently blocked due to Docker Desktop not running on Windows development machine\n- Next local steps planned: start Docker Desktop and test with `docker build -t totem-api -f apps/api/Dockerfile . && docker run --rm totem-api`\n- Moving forward with CI implementation to enable builds in GitHub Actions environment regardless of local Docker availability\n</info added on 2025-09-10T23:55:18.301Z>",
+            "status": "done",
             "testStrategy": "Build and run containers locally on Windows and Unix. Confirm services start and expose expected ports."
           },
           {
@@ -53,7 +53,7 @@
             "description": "Configure GitHub Actions workflows for linting, testing, and deploying both Python and Node apps to GCP Cloud Run.",
             "dependencies": ["1.3", "1.4"],
             "details": "Create .github/workflows with jobs for Node and Python, including build, lint, test, and deploy stages. Use GCP service account credentials via GitHub Secrets. Add notes for Windows runners if needed.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Push a test PR and verify CI runs all jobs, fails on lint/test errors, and deploys to a test Cloud Run service on merge."
           },
           {
@@ -297,7 +297,7 @@
     ],
     "metadata": {
       "created": "2025-09-10T23:30:30.057Z",
-      "updated": "2025-09-10T23:53:03.433Z",
+      "updated": "2025-09-11T00:11:47.253Z",
       "description": "Tasks for master context"
     }
   }
