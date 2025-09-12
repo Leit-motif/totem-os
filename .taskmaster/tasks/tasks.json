@@ -9,7 +9,7 @@
         "testStrategy": "Verify Docker builds successfully locally. Ensure CI pipeline runs on PR and successfully deploys to a development environment. Validate that secrets are properly managed and not exposed in the repository.",
         "priority": "high",
         "dependencies": [],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -62,7 +62,7 @@
             "description": "Add base GCP setup stubs: gcloud auth instructions, project/env files, and placeholders for Cloud Run, Jobs, Scheduler, Cloud SQL, and GCS.",
             "dependencies": ["1.5"],
             "details": "Document gcloud auth steps for Windows and Unix. Add .env.example files for each app. Create stub YAMLs or markdown for GCP resources to be provisioned later.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Verify documentation is clear and .env.example files are present. Confirm developers can authenticate with gcloud and set up local env files."
           },
           {
@@ -71,7 +71,7 @@
             "description": "Set up GCP IAM roles and service accounts with least-privilege principles for CI/CD and runtime, and document their usage.",
             "dependencies": ["1.6"],
             "details": "Create and document service accounts for GitHub Actions and app runtime. Assign minimal required roles for Cloud Run, Cloud SQL, GCS, and Secret Manager. Store service account keys securely.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Test deployment with the configured service accounts. Confirm no excessive permissions and that all required GCP APIs are accessible."
           },
           {
@@ -80,7 +80,7 @@
             "description": "Set up GCP Secret Manager for storing sensitive credentials and configure access from both local development and CI/CD.",
             "dependencies": ["1.7"],
             "details": "Create initial secrets in GCP Secret Manager. Add code/config stubs in apps/api and apps/web for loading secrets. Document secret usage and access patterns.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Verify secrets are not committed to the repo. Test secret retrieval locally and in CI/CD by deploying a test app that reads a secret."
           }
         ]
@@ -94,7 +94,53 @@
         "priority": "high",
         "dependencies": [1],
         "status": "pending",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Provision Cloud SQL Postgres Instance with pgvector",
+            "description": "Set up a managed Cloud SQL PostgreSQL instance and enable the pgvector extension for vector operations.",
+            "dependencies": [],
+            "details": "Configure the instance with appropriate resources, security settings, and enable the pgvector extension to support vector data types required for embeddings.",
+            "status": "in-progress",
+            "testStrategy": "Verify instance accessibility, pgvector extension installation, and ability to create vector columns."
+          },
+          {
+            "id": 2,
+            "title": "Implement Core Database Schema from PRD SQL DDL",
+            "description": "Create tables for documents, chunks, embeddings, entities, relations, notes, tasks, runs, checkpoints, mailbox, prompts, and tool_defs as defined in the PRD.",
+            "dependencies": ["2.1"],
+            "details": "Define tables, columns, data types, primary and foreign keys, and constraints according to the PRD's SQL DDL section. Ensure normalization and referential integrity.",
+            "status": "pending",
+            "testStrategy": "Run schema creation scripts in a test environment and validate table structures and constraints."
+          },
+          {
+            "id": 3,
+            "title": "Configure Nightly Backups for Database Instance",
+            "description": "Set up automated nightly backups for the Cloud SQL Postgres instance to ensure data durability and recovery.",
+            "dependencies": ["2.1"],
+            "details": "Configure backup schedule, retention policies, and verify backup integrity. Ensure backups include all schemas and extensions.",
+            "status": "pending",
+            "testStrategy": "Perform backup and restore operations in a test environment to validate backup reliability."
+          },
+          {
+            "id": 4,
+            "title": "Create Migration Scripts for Schema Changes",
+            "description": "Develop migration scripts to handle future schema changes and updates safely and efficiently.",
+            "dependencies": ["2.2"],
+            "details": "Use a migration tool (e.g., Flyway, Liquibase) to create versioned scripts for schema evolution, including table alterations and constraint updates.",
+            "status": "pending",
+            "testStrategy": "Apply migration scripts in a staging environment and verify successful schema updates without data loss."
+          },
+          {
+            "id": 5,
+            "title": "Set Up Connection Pooling for Efficient Database Access",
+            "description": "Implement connection pooling to optimize database access and resource utilization for application workloads.",
+            "dependencies": ["2.1"],
+            "details": "Configure a connection pooler (e.g., PgBouncer) with appropriate settings for max connections, timeouts, and authentication.",
+            "status": "pending",
+            "testStrategy": "Test application database access under load to ensure stable connections and optimal performance."
+          }
+        ]
       },
       {
         "id": 3,
@@ -297,7 +343,7 @@
     ],
     "metadata": {
       "created": "2025-09-10T23:30:30.057Z",
-      "updated": "2025-09-11T00:11:47.253Z",
+      "updated": "2025-09-12T00:23:11.141Z",
       "description": "Tasks for master context"
     }
   }
