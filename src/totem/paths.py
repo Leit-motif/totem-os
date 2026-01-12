@@ -80,3 +80,25 @@ class VaultPaths:
             Path to the inbox date folder
         """
         return self.inbox / date_str
+    
+    def routed_date_folder(self, date_str: str) -> Path:
+        """Get path to routed folder for a specific date.
+        
+        Args:
+            date_str: Date in YYYY-MM-DD format
+            
+        Returns:
+            Path to the routed date folder
+        """
+        return self.routed / date_str
+    
+    def review_queue_date_folder(self, date_str: str) -> Path:
+        """Get path to review queue folder for a specific date.
+        
+        Args:
+            date_str: Date in YYYY-MM-DD format
+            
+        Returns:
+            Path to the review queue date folder
+        """
+        return self.review_queue / date_str

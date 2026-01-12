@@ -12,6 +12,7 @@ from .capture import ingest_file_capture, ingest_text_capture
 from .config import TotemConfig
 from .ledger import LedgerWriter, read_ledger_tail
 from .paths import VaultPaths
+from .route import process_capture_routing
 
 app = typer.Typer(
     name="totem",
@@ -320,6 +321,156 @@ def ledger_tail(
             table.add_row(ts_str, event.event_type, capture_id_str, payload_str)
 
         console.print(table)
+
+
+@app.command()
+def route(
+    vault_path: str = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Path to vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
+    ),
+    date: str = typer.Option(
+        None,
+        "--date",
+        "-d",
+        help="Date for inbox folder (YYYY-MM-DD, default: today)",
+    ),
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        "-l",
+        help="Maximum number of captures to process",
+    ),
+):
+    """Route captures using deterministic keyword heuristics.
+    
+    Reads raw captures from 00_inbox/YYYY-MM-DD/, applies keyword-based routing,
+    and writes outputs to either routed/ or review_queue/ based on confidence.
+    """
+    # Load vault configuration
+    if vault_path:
+        config = TotemConfig(vault_path=Path(vault_path))
+    else:
+        config = TotemConfig.from_env()
+    
+    paths = VaultPaths.from_config(config)
+
+    # Check if vault exists
+    if not paths.system.exists():
+        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
+
+    # Determine date string (today if not provided)
+    if date:
+        date_str = date
+    else:
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Find inbox date folder
+    inbox_date_folder = paths.inbox_date_folder(date_str)
+    
+    if not inbox_date_folder.exists():
+        console.print(f"[yellow]No inbox folder found for {date_str}[/yellow]")
+        console.print(f"[dim]Expected: {inbox_date_folder}[/dim]")
+        return
+
+    # Find all raw capture files (exclude .meta.json files)
+    all_files = []
+    for file_path in inbox_date_folder.iterdir():
+        if file_path.is_file() and not file_path.name.endswith(".meta.json"):
+            all_files.append(file_path)
+    
+    if not all_files:
+        console.print(f"[yellow]No capture files found in {inbox_date_folder.name}/[/yellow]")
+        return
+
+    # Sort by modification time (newest first)
+    all_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    
+    # Apply limit
+    files_to_process = all_files[:limit]
+    
+    if len(all_files) > limit:
+        console.print(f"[dim]Found {len(all_files)} captures, processing {limit} (use --limit to change)[/dim]\n")
+    else:
+        console.print(f"[dim]Found {len(files_to_process)} capture(s) to process[/dim]\n")
+
+    # Initialize ledger writer
+    ledger_writer = LedgerWriter(paths.ledger_file)
+
+    # Process each capture
+    results = []
+    routed_count = 0
+    review_count = 0
+
+    for raw_file in files_to_process:
+        # Find corresponding meta file
+        meta_file = raw_file.with_suffix(raw_file.suffix + ".meta.json")
+        
+        if not meta_file.exists():
+            console.print(f"[yellow]Warning: No meta file for {raw_file.name}, skipping[/yellow]")
+            continue
+
+        try:
+            # Process routing
+            output_path, was_routed = process_capture_routing(
+                raw_file_path=raw_file,
+                meta_file_path=meta_file,
+                vault_root=paths.root,
+                config=config,
+                ledger_writer=ledger_writer,
+                date_str=date_str,
+            )
+            
+            # Read the output to get details for display
+            import json
+            output_data = json.loads(output_path.read_text(encoding="utf-8"))
+            
+            results.append({
+                "capture_id": output_data["capture_id"],
+                "route": output_data["route_label"],
+                "confidence": output_data["confidence"],
+                "was_routed": was_routed,
+                "output_path": output_path.relative_to(paths.root),
+            })
+            
+            if was_routed:
+                routed_count += 1
+            else:
+                review_count += 1
+
+        except Exception as e:
+            console.print(f"[red]Error processing {raw_file.name}: {e}[/red]")
+            continue
+
+    # Display results table
+    if results:
+        table = Table(title=f"Routing Results for {date_str}")
+        table.add_column("Capture ID", style="cyan")
+        table.add_column("Route", style="magenta")
+        table.add_column("Confidence", style="yellow")
+        table.add_column("Destination", style="green")
+
+        for result in results:
+            capture_id_short = result["capture_id"][:8] + "..."
+            confidence_str = f"{result['confidence']:.2f}"
+            destination = "routed" if result["was_routed"] else "review_queue"
+            
+            table.add_row(
+                capture_id_short,
+                result["route"],
+                confidence_str,
+                destination
+            )
+
+        console.print(table)
+        console.print()
+        console.print(f"[bold green]Summary:[/bold green] {routed_count} routed, {review_count} flagged for review")
+    else:
+        console.print("[yellow]No captures were processed[/yellow]")
 
 
 @app.command()
