@@ -10,7 +10,14 @@ from rich.table import Table
 
 from .capture import ingest_file_capture, ingest_text_capture
 from .config import TotemConfig
+from .distill import (
+    load_routed_items,
+    process_distillation,
+    process_distillation_dry_run,
+    undo_canon_write,
+)
 from .ledger import LedgerWriter, read_ledger_tail
+from .llm import get_llm_client
 from .paths import VaultPaths
 from .route import process_capture_routing
 
@@ -471,6 +478,274 @@ def route(
         console.print(f"[bold green]Summary:[/bold green] {routed_count} routed, {review_count} flagged for review")
     else:
         console.print("[yellow]No captures were processed[/yellow]")
+
+
+@app.command()
+def distill(
+    vault_path: str = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Path to vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
+    ),
+    date: str = typer.Option(
+        None,
+        "--date",
+        "-d",
+        help="Date for processing (YYYY-MM-DD, default: today)",
+    ),
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        "-l",
+        help="Maximum number of routed items to process",
+    ),
+    engine: str = typer.Option(
+        "auto",
+        "--engine",
+        "-e",
+        help="LLM engine: 'fake', 'real', 'openai', 'anthropic', or 'auto' (default: auto)",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview distillation without writing canon files",
+    ),
+):
+    """Distill routed captures using LLM and apply canon writes.
+    
+    Reads from 10_derived/routed/YYYY-MM-DD/, processes through LLM distillation,
+    and writes results to distill/, daily notes, todo, and entities.
+    All writes are append-only with undo support via 'totem undo'.
+    
+    Use --dry-run to preview what would be written without applying changes.
+    """
+    # Load vault configuration
+    if vault_path:
+        config = TotemConfig(vault_path=Path(vault_path))
+    else:
+        config = TotemConfig.from_env()
+    
+    paths = VaultPaths.from_config(config)
+
+    # Check if vault exists
+    if not paths.system.exists():
+        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
+
+    # Determine date string (today if not provided)
+    if date:
+        date_str = date
+    else:
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Get LLM client
+    try:
+        llm_client = get_llm_client(engine)
+        console.print(f"[dim]Using LLM engine: {llm_client.engine_name}[/dim]")
+        if llm_client.provider_model:
+            console.print(f"[dim]Provider/model: {llm_client.provider_model}[/dim]")
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+    # Load routed items
+    routed_items = load_routed_items(paths, date_str, limit=limit)
+    
+    if not routed_items:
+        console.print(f"[yellow]No routed items found for {date_str}[/yellow]")
+        console.print(f"[dim]Expected: {paths.routed_date_folder(date_str)}[/dim]")
+        return
+
+    if dry_run:
+        console.print(f"[yellow]DRY-RUN MODE[/yellow] — Found {len(routed_items)} routed item(s) to preview\n")
+    else:
+        console.print(f"[dim]Found {len(routed_items)} routed item(s) to process[/dim]\n")
+
+    # Initialize ledger writer (only used in non-dry-run mode)
+    ledger_writer = LedgerWriter(paths.ledger_file)
+
+    # Process each routed item
+    results = []
+    for item in routed_items:
+        capture_id = item.get("capture_id", "unknown")
+        capture_id_short = capture_id[:8] + "..."
+        
+        try:
+            console.print(f"[cyan]Processing:[/cyan] {capture_id_short}")
+            
+            if dry_run:
+                # Dry-run mode: generate but don't write canon files
+                distill_result, would_apply, distill_path = process_distillation_dry_run(
+                    routed_item=item,
+                    llm_client=llm_client,
+                    vault_paths=paths,
+                    date_str=date_str,
+                )
+                
+                results.append({
+                    "capture_id": capture_id,
+                    "confidence": distill_result.confidence,
+                    "summary": distill_result.summary[:50] + "..." if len(distill_result.summary) > 50 else distill_result.summary,
+                    "tasks_count": len(distill_result.tasks),
+                    "entities_count": len(distill_result.entities),
+                    "would_modify": len(would_apply),
+                    "distill_path": distill_path,
+                    "would_apply": would_apply,
+                })
+                
+                console.print(f"  [green]+[/green] Distilled (confidence: {distill_result.confidence:.2f})")
+                console.print(f"    Distill artifact: [dim]{distill_path}[/dim]")
+                console.print(f"    [yellow]Would write to {len(would_apply)} file(s):[/yellow]")
+                for af in would_apply:
+                    console.print(f"      - {af.path}")
+            else:
+                # Normal mode: write canon files
+                distill_result, write_record = process_distillation(
+                    routed_item=item,
+                    llm_client=llm_client,
+                    vault_paths=paths,
+                    ledger_writer=ledger_writer,
+                    date_str=date_str,
+                )
+                
+                results.append({
+                    "capture_id": capture_id,
+                    "write_id": write_record.write_id,
+                    "confidence": distill_result.confidence,
+                    "summary": distill_result.summary[:50] + "..." if len(distill_result.summary) > 50 else distill_result.summary,
+                    "tasks_count": len(distill_result.tasks),
+                    "entities_count": len(distill_result.entities),
+                    "modified_files": len(write_record.applied_files),
+                })
+                
+                console.print(f"  [green]+[/green] Distilled (confidence: {distill_result.confidence:.2f})")
+                console.print(f"    Write ID: [yellow]{write_record.write_id[:8]}...[/yellow]")
+            
+        except Exception as e:
+            console.print(f"  [red]x Error: {e}[/red]")
+            continue
+
+    # Summary
+    console.print()
+    if results:
+        if dry_run:
+            table = Table(title=f"Dry-Run Preview — {date_str}")
+            table.add_column("Capture", style="cyan")
+            table.add_column("Conf", style="green")
+            table.add_column("Tasks", style="magenta")
+            table.add_column("Entities", style="blue")
+            table.add_column("Would Write", style="yellow")
+            
+            for r in results:
+                table.add_row(
+                    r["capture_id"][:8] + "...",
+                    f"{r['confidence']:.2f}",
+                    str(r["tasks_count"]),
+                    str(r["entities_count"]),
+                    str(r["would_modify"]),
+                )
+            
+            console.print(table)
+            console.print()
+            console.print(f"[bold yellow]DRY-RUN Summary:[/bold yellow] {len(results)} item(s) would be distilled")
+            console.print("[dim]Distill artifacts were created. Canon files were NOT modified.[/dim]")
+            console.print("[dim]Run without --dry-run to apply changes.[/dim]")
+        else:
+            table = Table(title=f"Distillation Results — {date_str}")
+            table.add_column("Capture", style="cyan")
+            table.add_column("Write ID", style="yellow")
+            table.add_column("Conf", style="green")
+            table.add_column("Tasks", style="magenta")
+            table.add_column("Entities", style="blue")
+            
+            for r in results:
+                table.add_row(
+                    r["capture_id"][:8] + "...",
+                    r["write_id"][:8] + "...",
+                    f"{r['confidence']:.2f}",
+                    str(r["tasks_count"]),
+                    str(r["entities_count"]),
+                )
+            
+            console.print(table)
+            console.print()
+            console.print(f"[bold green]Summary:[/bold green] {len(results)} item(s) distilled")
+            console.print("[dim]Use 'totem undo --write-id <ID>' to reverse any write[/dim]")
+    else:
+        console.print("[yellow]No items were successfully distilled[/yellow]")
+
+
+@app.command()
+def undo(
+    vault_path: str = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Path to vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
+    ),
+    write_id: str = typer.Option(
+        ...,
+        "--write-id",
+        "-w",
+        help="Write ID (UUID) to undo",
+    ),
+):
+    """Undo a canon write by removing inserted blocks.
+    
+    Reverses the append-only writes from a distillation operation.
+    The write ID can be found in the distillation output or ledger.
+    """
+    # Load vault configuration
+    if vault_path:
+        config = TotemConfig(vault_path=Path(vault_path))
+    else:
+        config = TotemConfig.from_env()
+    
+    paths = VaultPaths.from_config(config)
+
+    # Check if vault exists
+    if not paths.system.exists():
+        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
+
+    # Initialize ledger writer
+    ledger_writer = LedgerWriter(paths.ledger_file)
+
+    try:
+        console.print(f"[cyan]Undoing write:[/cyan] {write_id}")
+        
+        modified_files = undo_canon_write(
+            write_id=write_id,
+            vault_paths=paths,
+            ledger_writer=ledger_writer,
+        )
+        
+        console.print()
+        console.print("[bold green]Undo successful![/bold green]")
+        
+        if modified_files:
+            console.print("[dim]Modified files:[/dim]")
+            for path in modified_files:
+                console.print(f"  - {path}")
+        else:
+            console.print("[yellow]No files were modified[/yellow]")
+        
+        console.print()
+        console.print("[dim]Note: entities.json changes require manual review[/dim]")
+        
+    except FileNotFoundError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        console.print("[dim]Check the write ID is correct (from distill output or ledger)[/dim]")
+        raise typer.Exit(code=1)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        console.print(f"[red]Unexpected error: {e}[/red]")
+        raise typer.Exit(code=1)
 
 
 @app.command()

@@ -1,0 +1,28 @@
+{
+  "write_id": "a2121f1c-e118-4e91-9290-ef08a0eaeb5b",
+  "ts": "2026-01-12T01:06:33Z",
+  "capture_id": "a6681c50-ac42-473f-801c-afc29d0892ef",
+  "applied_files": [
+    {
+      "path": "20_memory\\daily\\2026-01-12.md",
+      "inserted_text": "<!-- TOTEM_BLOCK_START:a2121f1c-e118-4e91-9290-ef08a0eaeb5b -->\n### Totem Distill (01:06 UTC) \u2014 a6681c50\n\n**Summary:** I need to call Alice about the project.\n\n**Key Points:**\n- I need to call Alice about the project. Must finish the report.\n\n**Entities:**\n- Alice [person]\n- Must [project]\n\n**Tasks:**\n- [ ] [MED] call Alice about the project. Must finish the report\n\n<!-- TOTEM_BLOCK_END:a2121f1c-e118-4e91-9290-ef08a0eaeb5b -->\n",
+      "content_hash": "c436ef4ab67b91a686de9cc228e8ce72bbbb1f96f702d51c6de61190f13850b5",
+      "mode": "append"
+    },
+    {
+      "path": "30_tasks\\todo.md",
+      "inserted_text": "<!-- TOTEM_BLOCK_START:a2121f1c-e118-4e91-9290-ef08a0eaeb5b -->\n## AI Draft Tasks (2026-01-12)\n\n- [ ] [MED] call Alice about the project. Must finish the report\n\n<!-- TOTEM_BLOCK_END:a2121f1c-e118-4e91-9290-ef08a0eaeb5b -->\n",
+      "content_hash": "d5675fb2c3b81e5680a3101312580f6fbb2316b474d766528ba06e2b15f5d01c",
+      "mode": "append"
+    },
+    {
+      "path": "20_memory\\entities.json",
+      "inserted_text": "[{\"name\": \"Alice\", \"kind\": \"person\", \"note\": null, \"first_seen_at\": \"2026-01-12T01:06:33Z\", \"last_seen_at\": \"2026-01-12T01:06:33Z\", \"source_capture_ids\": [\"a6681c50-ac42-473f-801c-afc29d0892ef\"], \"write_id\": \"a2121f1c-e118-4e91-9290-ef08a0eaeb5b\"}, {\"name\": \"Must\", \"kind\": \"project\", \"note\": null, \"first_seen_at\": \"2026-01-12T01:06:33Z\", \"last_seen_at\": \"2026-01-12T01:06:33Z\", \"source_capture_ids\": [\"a6681c50-ac42-473f-801c-afc29d0892ef\"], \"write_id\": \"a2121f1c-e118-4e91-9290-ef08a0eaeb5b\"}]",
+      "content_hash": "f81ed27cfb59771615c82b9d63d1363e71717b59116e09a03153110e96ba50d2",
+      "mode": "append"
+    }
+  ],
+  "distill_path": "10_derived\\distill\\2026-01-12\\a6681c50-ac42-473f-801c-afc29d0892ef_1.json",
+  "can_undo": false,
+  "undone_at": "2026-01-12T01:06:57Z"
+}

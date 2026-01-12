@@ -1,0 +1,13 @@
+{
+  "capture_id": "a6681c50-ac42-473f-801c-afc29d0892ef",
+  "routed_at": "2026-01-12T01:06:21.367693Z",
+  "route_label": "TASK",
+  "confidence": 0.9,
+  "next_actions": [
+    "call Alice about the project",
+    "finish the report"
+  ],
+  "reasoning": "Matched 3 keyword(s) for TASK (need to, must, finish)",
+  "raw_file_path": "00_inbox\\2026-01-12\\capture_20260112_010614.txt",
+  "meta_file_path": "00_inbox\\2026-01-12\\capture_20260112_010614.txt.meta.json"
+}

@@ -1,0 +1,13 @@
+{
+  "id": "a6681c50-ac42-473f-801c-afc29d0892ef",
+  "created_at": "2026-01-12T01:06:14.684729Z",
+  "source": "cli_text",
+  "type": "text",
+  "files": [
+    "capture_20260112_010614.txt"
+  ],
+  "context": null,
+  "origin": {
+    "command": "totem capture --text"
+  }
+}

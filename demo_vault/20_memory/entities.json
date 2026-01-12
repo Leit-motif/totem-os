@@ -1,0 +1,24 @@
+[
+  {
+    "name": "Alice",
+    "kind": "person",
+    "note": null,
+    "first_seen_at": "2026-01-12T01:06:33Z",
+    "last_seen_at": "2026-01-12T01:06:33Z",
+    "source_capture_ids": [
+      "a6681c50-ac42-473f-801c-afc29d0892ef"
+    ],
+    "write_id": "a2121f1c-e118-4e91-9290-ef08a0eaeb5b"
+  },
+  {
+    "name": "Must",
+    "kind": "project",
+    "note": null,
+    "first_seen_at": "2026-01-12T01:06:33Z",
+    "last_seen_at": "2026-01-12T01:06:33Z",
+    "source_capture_ids": [
+      "a6681c50-ac42-473f-801c-afc29d0892ef"
+    ],
+    "write_id": "a2121f1c-e118-4e91-9290-ef08a0eaeb5b"
+  }
+]

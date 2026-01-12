@@ -1,0 +1,30 @@
+{
+  "capture_id": "a6681c50-ac42-473f-801c-afc29d0892ef",
+  "distilled_at": "2026-01-12T01:06:33Z",
+  "route_label": "TASK",
+  "summary": "I need to call Alice about the project.",
+  "key_points": [
+    "I need to call Alice about the project. Must finish the report."
+  ],
+  "tasks": [
+    {
+      "text": "call Alice about the project. Must finish the report",
+      "priority": "med",
+      "due_date": null
+    }
+  ],
+  "entities": [
+    {
+      "name": "Alice",
+      "kind": "person",
+      "note": null
+    },
+    {
+      "name": "Must",
+      "kind": "project",
+      "note": null
+    }
+  ],
+  "confidence": 0.93,
+  "reasoning": "FakeLLM: extracted from 63 chars, route=TASK"
+}

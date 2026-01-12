@@ -1,0 +1,8 @@
+# Totem OS Configuration
+
+vault_path: demo_vault
+
+# Confidence thresholds for routing and distillation
+route_confidence_min: 0.7
+distill_confidence_min: 0.75
+entity_confidence_min: 0.7
