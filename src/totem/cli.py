@@ -1,12 +1,16 @@
 """Typer-based CLI for Totem OS."""
 
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.table import Table
 
+from .capture import ingest_file_capture, ingest_text_capture
 from .config import TotemConfig
+from .ledger import LedgerWriter, read_ledger_tail
 from .paths import VaultPaths
 
 app = typer.Typer(
@@ -124,6 +128,198 @@ Updated by distillation when decisions reveal patterns.
     console.print()
     console.print("[bold green]Vault initialization complete![/bold green]")
     console.print(f"[dim]Vault location:[/dim] {vault_root.absolute()}")
+
+
+@app.command()
+def capture(
+    text: str = typer.Option(
+        None,
+        "--text",
+        "-t",
+        help="Capture text content directly",
+    ),
+    file: str = typer.Option(
+        None,
+        "--file",
+        "-f",
+        help="Capture file by copying into vault inbox",
+    ),
+    vault_path: str = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Path to vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
+    ),
+    date: str = typer.Option(
+        None,
+        "--date",
+        "-d",
+        help="Date for inbox folder (YYYY-MM-DD, default: today)",
+    ),
+):
+    """Capture text or file into the vault inbox.
+    
+    Creates raw file + .meta.json sidecar in 00_inbox/YYYY-MM-DD/.
+    Appends CAPTURE_INGESTED event to ledger.jsonl.
+    """
+    # Validate: exactly one of --text or --file must be provided
+    if not text and not file:
+        console.print("[red]Error: Must provide either --text or --file[/red]")
+        raise typer.Exit(code=1)
+    
+    if text and file:
+        console.print("[red]Error: Cannot provide both --text and --file[/red]")
+        raise typer.Exit(code=1)
+
+    # Load vault configuration
+    if vault_path:
+        config = TotemConfig(vault_path=Path(vault_path))
+    else:
+        config = TotemConfig.from_env()
+    
+    paths = VaultPaths.from_config(config)
+
+    # Check if vault exists
+    if not paths.system.exists():
+        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
+
+    # Determine date string (today if not provided)
+    if date:
+        date_str = date
+    else:
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Initialize ledger writer
+    ledger_writer = LedgerWriter(paths.ledger_file)
+
+    try:
+        if text:
+            # Ingest text capture
+            raw_path, meta_path, capture_id = ingest_text_capture(
+                vault_inbox=paths.inbox,
+                text=text,
+                ledger_writer=ledger_writer,
+                date_str=date_str,
+            )
+            console.print("[green]Captured text:[/green]")
+            console.print(f"  Raw:  {raw_path.relative_to(paths.root)}")
+            console.print(f"  Meta: {meta_path.relative_to(paths.root)}")
+            console.print(f"  ID:   {capture_id}")
+        
+        elif file:
+            # Ingest file capture
+            source_path = Path(file)
+            raw_path, meta_path, capture_id = ingest_file_capture(
+                vault_inbox=paths.inbox,
+                source_file_path=source_path,
+                ledger_writer=ledger_writer,
+                date_str=date_str,
+            )
+            console.print("[green]Captured file:[/green]")
+            console.print(f"  Raw:  {raw_path.relative_to(paths.root)}")
+            console.print(f"  Meta: {meta_path.relative_to(paths.root)}")
+            console.print(f"  ID:   {capture_id}")
+
+    except FileNotFoundError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        console.print(f"[red]Error during capture: {e}[/red]")
+        raise typer.Exit(code=1)
+
+
+ledger_app = typer.Typer(help="Ledger commands")
+app.add_typer(ledger_app, name="ledger")
+
+
+@ledger_app.command("tail")
+def ledger_tail(
+    n: int = typer.Option(
+        20,
+        "--n",
+        help="Number of recent events to display",
+    ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help="Show full payloads with JSON pretty-print",
+    ),
+    vault_path: str = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Path to vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
+    ),
+):
+    """Display the last N events from the ledger.
+    
+    Shows recent ledger events with timestamps, types, and payloads.
+    Skips malformed lines with warnings.
+    Use --full to see complete payloads with JSON formatting.
+    """
+    # Load vault configuration
+    if vault_path:
+        config = TotemConfig(vault_path=Path(vault_path))
+    else:
+        config = TotemConfig.from_env()
+    
+    paths = VaultPaths.from_config(config)
+
+    # Check if vault exists
+    if not paths.system.exists():
+        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
+
+    # Read ledger tail
+    events = read_ledger_tail(paths.ledger_file, n=n)
+
+    if not events:
+        console.print("[dim]No events in ledger[/dim]")
+        return
+
+    if full:
+        # Full mode: show each event with pretty-printed JSON
+        console.print(f"[bold]Last {len(events)} Ledger Event(s)[/bold]\n")
+        for i, event in enumerate(events, 1):
+            console.print(f"[cyan]Event {i}/{len(events)}[/cyan]")
+            console.print(f"  [dim]Event ID:[/dim]    {event.event_id}")
+            console.print(f"  [dim]Run ID:[/dim]      {event.run_id}")
+            console.print(f"  [dim]Timestamp:[/dim]   {event.ts.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+            console.print(f"  [dim]Event Type:[/dim]  [magenta]{event.event_type}[/magenta]")
+            console.print(f"  [dim]Capture ID:[/dim]  {event.capture_id or '-'}")
+            console.print(f"  [dim]Payload:[/dim]")
+            
+            import json
+            payload_json = json.dumps(event.payload, indent=2)
+            for line in payload_json.split('\n'):
+                console.print(f"    {line}")
+            console.print()
+    else:
+        # Table mode: compact view with truncation
+        table = Table(title=f"Last {len(events)} Ledger Event(s)")
+        table.add_column("Timestamp (UTC)", style="cyan", no_wrap=True)
+        table.add_column("Event Type", style="magenta")
+        table.add_column("Capture ID", style="yellow")
+        table.add_column("Payload", style="dim")
+
+        for event in events:
+            # Format timestamp with UTC indicator
+            ts_str = event.ts.strftime("%Y-%m-%d %H:%M:%S")
+            
+            # Format capture ID
+            capture_id_str = event.capture_id[:8] + "..." if event.capture_id else "-"
+            
+            # Format payload (truncate if too long)
+            payload_str = str(event.payload)
+            if len(payload_str) > 60:
+                payload_str = payload_str[:57] + "..."
+            
+            table.add_row(ts_str, event.event_type, capture_id_str, payload_str)
+
+        console.print(table)
 
 
 @app.command()
