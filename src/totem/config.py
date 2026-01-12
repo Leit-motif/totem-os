@@ -14,6 +14,7 @@ class TotemConfig(BaseModel):
         default_factory=lambda: Path(os.environ.get("TOTEM_VAULT_PATH", "./totem_vault"))
     )
     route_confidence_min: float = Field(default=0.70)
+    router_high_confidence_threshold: float = Field(default=0.90)
     distill_confidence_min: float = Field(default=0.75)
     entity_confidence_min: float = Field(default=0.70)
 
@@ -28,6 +29,7 @@ class TotemConfig(BaseModel):
         return cls(
             vault_path=vault_path,
             route_confidence_min=float(os.environ.get("TOTEM_ROUTE_CONFIDENCE_MIN", "0.70")),
+            router_high_confidence_threshold=float(os.environ.get("TOTEM_ROUTER_HIGH_CONFIDENCE_THRESHOLD", "0.90")),
             distill_confidence_min=float(os.environ.get("TOTEM_DISTILL_CONFIDENCE_MIN", "0.75")),
             entity_confidence_min=float(os.environ.get("TOTEM_ENTITY_CONFIDENCE_MIN", "0.70")),
         )
@@ -40,6 +42,7 @@ vault_path: {self.vault_path}
 
 # Confidence thresholds for routing and distillation
 route_confidence_min: {self.route_confidence_min}
+router_high_confidence_threshold: {self.router_high_confidence_threshold}
 distill_confidence_min: {self.distill_confidence_min}
 entity_confidence_min: {self.entity_confidence_min}
 """

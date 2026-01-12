@@ -350,12 +350,44 @@ def route(
         "-l",
         help="Maximum number of captures to process",
     ),
+    engine: str = typer.Option(
+        "auto",
+        "--engine",
+        "-e",
+        help="Routing engine: 'rule', 'llm', 'hybrid', or 'auto' (default: auto - hybrid if API key present, else rule)",
+    ),
+    llm_engine: str = typer.Option(
+        "auto",
+        "--llm-engine",
+        help="LLM engine for llm/hybrid: 'fake', 'openai', 'anthropic', or 'auto' (default: auto)",
+    ),
+    no_short_circuit: bool = typer.Option(
+        False,
+        "--no-short-circuit",
+        help="Hybrid mode: always call LLM even if rule confidence is high (for A/B testing)",
+    ),
 ):
-    """Route captures using deterministic keyword heuristics.
+    """Route captures using rule-based, LLM, or hybrid routing.
     
-    Reads raw captures from 00_inbox/YYYY-MM-DD/, applies keyword-based routing,
+    Reads raw captures from 00_inbox/YYYY-MM-DD/, applies routing logic,
     and writes outputs to either routed/ or review_queue/ based on confidence.
+    
+    Engine modes:
+    - rule: Deterministic keyword-based heuristics only
+    - llm: LLM-based classification only
+    - hybrid: Rule first, LLM fallback if rule confidence < threshold
+    - auto: hybrid if API key present, else rule
+    
+    Use --no-short-circuit to force hybrid mode to always call LLM (for A/B testing).
     """
+    from .llm.router import has_llm_api_key
+    
+    # Validate engine option
+    valid_engines = ["rule", "llm", "hybrid", "auto"]
+    if engine not in valid_engines:
+        console.print(f"[red]Error: Invalid engine '{engine}'. Must be one of: {', '.join(valid_engines)}[/red]")
+        raise typer.Exit(code=1)
+    
     # Load vault configuration
     if vault_path:
         config = TotemConfig(vault_path=Path(vault_path))
@@ -369,6 +401,34 @@ def route(
         console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
         console.print("[yellow]Run 'totem init' first[/yellow]")
         raise typer.Exit(code=1)
+
+    # Determine effective engine and display info
+    effective_engine = engine
+    if engine == "auto":
+        if has_llm_api_key():
+            effective_engine = "hybrid"
+            console.print("[dim]Auto-detected API key: using hybrid engine[/dim]")
+        else:
+            effective_engine = "rule"
+            console.print("[dim]No API key found: using rule engine[/dim]")
+    else:
+        console.print(f"[dim]Using {engine} engine[/dim]")
+    
+    # Display no-short-circuit mode
+    if no_short_circuit:
+        if effective_engine in ("hybrid", "auto"):
+            console.print("[yellow]--no-short-circuit: LLM will always be called (A/B testing mode)[/yellow]")
+        else:
+            console.print("[dim]Note: --no-short-circuit only affects hybrid mode[/dim]")
+    
+    # Check if LLM is requested but no API key
+    if effective_engine in ("llm", "hybrid") and llm_engine != "fake" and not has_llm_api_key():
+        if llm_engine == "auto":
+            console.print("[dim]No API key found: using fake LLM router[/dim]")
+        else:
+            console.print(f"[red]Error: LLM engine '{llm_engine}' requested but no API key found[/red]")
+            console.print("[yellow]Set OPENAI_API_KEY or ANTHROPIC_API_KEY, or use --llm-engine fake[/yellow]")
+            raise typer.Exit(code=1)
 
     # Determine date string (today if not provided)
     if date:
@@ -422,7 +482,7 @@ def route(
             continue
 
         try:
-            # Process routing
+            # Process routing with specified engine
             output_path, was_routed = process_capture_routing(
                 raw_file_path=raw_file,
                 meta_file_path=meta_file,
@@ -430,6 +490,9 @@ def route(
                 config=config,
                 ledger_writer=ledger_writer,
                 date_str=date_str,
+                engine=effective_engine,
+                llm_engine=llm_engine,
+                no_short_circuit=no_short_circuit,
             )
             
             # Read the output to get details for display
@@ -455,7 +518,7 @@ def route(
 
     # Display results table
     if results:
-        table = Table(title=f"Routing Results for {date_str}")
+        table = Table(title=f"Routing Results for {date_str} (engine: {effective_engine})")
         table.add_column("Capture ID", style="cyan")
         table.add_column("Route", style="magenta")
         table.add_column("Confidence", style="yellow")

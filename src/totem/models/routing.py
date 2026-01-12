@@ -19,9 +19,9 @@ class RouteLabel(str, Enum):
 
 
 class RouteResult(BaseModel):
-    """Result of routing a capture through keyword heuristics.
+    """Result of routing a capture through keyword heuristics or LLM.
     
-    This is the output of the RuleRouter before bouncer logic.
+    This is the output of any router (RuleRouter, LLMRouter, HybridRouter).
     """
     
     capture_id: str = Field(description="Capture identifier")
@@ -34,6 +34,45 @@ class RouteResult(BaseModel):
     reasoning: str = Field(
         default="",
         description="Human-readable explanation of routing decision"
+    )
+    
+    model_config = {"frozen": False}
+
+
+class SubRouteResult(BaseModel):
+    """Simplified route result for embedding in hybrid results.
+    
+    Used to track both rule and LLM results in hybrid routing payloads.
+    """
+    
+    label: str = Field(description="Route label value")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence score")
+    
+    model_config = {"frozen": False}
+
+
+class HybridRouteMetadata(BaseModel):
+    """Metadata for hybrid routing decisions.
+    
+    Captures both rule and LLM results along with which was chosen.
+    """
+    
+    engine: Literal["rule", "llm", "hybrid"] = Field(description="Engine used for routing")
+    rule_result: SubRouteResult | None = Field(
+        default=None,
+        description="Result from rule-based router (if hybrid)"
+    )
+    llm_result: SubRouteResult | None = Field(
+        default=None,
+        description="Result from LLM router (if hybrid or llm)"
+    )
+    chosen_source: Literal["rule", "llm"] | None = Field(
+        default=None,
+        description="Which result was chosen (for hybrid)"
+    )
+    provider_model: str | None = Field(
+        default=None,
+        description="Provider/model string (e.g., 'openai/gpt-4o-mini')"
     )
     
     model_config = {"frozen": False}

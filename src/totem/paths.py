@@ -37,6 +37,7 @@ class VaultPaths:
         # System subdirectories
         self.traces = self.system / "traces"
         self.traces_writes = self.traces / "writes"
+        self.traces_routing = self.traces / "routing"
         
         # System files
         self.config_file = self.system / "config.yaml"
@@ -70,6 +71,7 @@ class VaultPaths:
             self.system,
             self.traces,
             self.traces_writes,
+            self.traces_routing,
         ]
 
     def inbox_date_folder(self, date_str: str) -> Path:
@@ -126,7 +128,18 @@ class VaultPaths:
             Path to the traces/writes date folder
         """
         return self.traces_writes / date_str
-    
+
+    def traces_routing_date_folder(self, date_str: str) -> Path:
+        """Get path to traces/routing folder for a specific date.
+        
+        Args:
+            date_str: Date in YYYY-MM-DD format
+            
+        Returns:
+            Path to the traces/routing date folder
+        """
+        return self.traces_routing / date_str
+
     def daily_note_path(self, date_str: str) -> Path:
         """Get path to daily note for a specific date.
         
