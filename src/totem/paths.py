@@ -38,10 +38,13 @@ class VaultPaths:
         self.traces = self.system / "traces"
         self.traces_writes = self.traces / "writes"
         self.traces_routing = self.traces / "routing"
+        self.learning = self.system / "learning"
         
         # System files
         self.config_file = self.system / "config.yaml"
         self.ledger_file = self.system / "ledger.jsonl"
+        self.review_events_file = self.learning / "review_events.jsonl"
+        self.review_queue_file = self.review_queue / "proposals.jsonl"
         
         # Memory files
         self.entities_file = self.memory / "entities.json"
@@ -72,6 +75,7 @@ class VaultPaths:
             self.traces,
             self.traces_writes,
             self.traces_routing,
+            self.learning,
         ]
 
     def inbox_date_folder(self, date_str: str) -> Path:

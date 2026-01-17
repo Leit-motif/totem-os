@@ -19,7 +19,16 @@ from .distill import (
 from .ledger import LedgerWriter, read_ledger_tail
 from .llm import get_llm_client
 from .paths import VaultPaths
+from .review import (
+    KeyInputSource,
+    LearningEventLogger,
+    ReviewQueue,
+    ReviewSession,
+    load_or_create_proposals,
+)
 from .route import process_capture_routing
+from .agents.intent_arbiter import IntentArbiterAgent
+from .models.intent import IntentType
 
 app = typer.Typer(
     name="totem",
@@ -366,13 +375,21 @@ def route(
         "--no-short-circuit",
         help="Hybrid mode: always call LLM even if rule confidence is high (for A/B testing)",
     ),
+    bypass_arbiter: bool = typer.Option(
+        False,
+        "--bypass-arbiter",
+        help="Skip IntentArbiter step",
+    ),
 ):
-    """Route captures using rule-based, LLM, or hybrid routing.
+    """Route captures using rule-based, LLM, hybrid routing, or IntentArbiter.
     
     Reads raw captures from 00_inbox/YYYY-MM-DD/, applies routing logic,
     and writes outputs to either routed/ or review_queue/ based on confidence.
     
-    Engine modes:
+    By default, IntentArbiter is run first to classify intent and route to downstream agents.
+    Use --bypass-arbiter to skip this and use purely the legacy routing engines.
+    
+    Engine modes (legacy):
     - rule: Deterministic keyword-based heuristics only
     - llm: LLM-based classification only
     - hybrid: Rule first, LLM fallback if rule confidence < threshold
@@ -495,6 +512,25 @@ def route(
                 no_short_circuit=no_short_circuit,
             )
             
+            # Integrate IntentArbiter if not bypassed
+            if not bypass_arbiter:
+                try:
+                    # Initialize Arbiter
+                    arbiter = IntentArbiterAgent(
+                        ledger_writer=ledger_writer,
+                        vault_root=paths.root,
+                        llm_engine="auto" if has_llm_api_key() else "fake"
+                    )
+                    
+                    # Read text again (it was read inside process_capture_routing too, but that's fine)
+                    text_content = raw_file.read_text(encoding="utf-8")
+                    
+                    console.print(f"[dim]Running IntentArbiter on {raw_file.name}...[/dim]")
+                    arbiter.run(text_content)
+                    
+                except Exception as e:
+                    console.print(f"[red]IntentArbiter failed for {raw_file.name}: {e}[/red]")
+            
             # Read the output to get details for display
             import json
             output_data = json.loads(output_path.read_text(encoding="utf-8"))
@@ -541,6 +577,43 @@ def route(
         console.print(f"[bold green]Summary:[/bold green] {routed_count} routed, {review_count} flagged for review")
     else:
         console.print("[yellow]No captures were processed[/yellow]")
+
+
+@app.command()
+def intent(
+    text: str = typer.Option(
+        ...,
+        "--text",
+        "-t",
+        help="Input text to classify and route",
+    ),
+    vault_path: str = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Path to vault directory",
+    ),
+):
+    """Classify and route a single input using IntentArbiter."""
+    # Load vault configuration
+    if vault_path:
+        config = TotemConfig(vault_path=Path(vault_path))
+    else:
+        config = TotemConfig.from_env()
+    
+    paths = VaultPaths.from_config(config)
+    ledger_writer = LedgerWriter(paths.ledger_file)
+    
+    arbiter = IntentArbiterAgent(
+        ledger_writer=ledger_writer,
+        vault_root=paths.root,
+        llm_engine="auto"
+    )
+    
+    console.print(f"[bold]Input:[/bold] {text}")
+    
+    # Run arbiter (Classify -> Log -> Route -> Agent.run)
+    arbiter.run(text)
 
 
 @app.command()
@@ -809,6 +882,130 @@ def undo(
     except Exception as e:
         console.print(f"[red]Unexpected error: {e}[/red]")
         raise typer.Exit(code=1)
+
+
+@app.command()
+def review(
+    vault_path: str = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Path to vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
+    ),
+    date: str = typer.Option(
+        None,
+        "--date",
+        "-d",
+        help="Date for proposals (YYYY-MM-DD, default: today)",
+    ),
+    limit: int = typer.Option(
+        None,
+        "--limit",
+        "-l",
+        help="Maximum number of proposals to review",
+    ),
+    queue_path: str = typer.Option(
+        None,
+        "--queue",
+        "-q",
+        help="Override path to review queue file",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview mode: show proposals without writing artifacts",
+    ),
+):
+    """Interactive review loop for proposed artifacts.
+    
+    Single-keystroke review interface:
+      [A]pprove  - Write proposal to canon
+      [V]eto     - Discard proposal (logs learning event)
+      [C]orrect  - Override with corrected artifact
+      [D]efer    - Keep in queue for later
+      [Q]uit     - Exit review session
+    
+    Philosophy: You never file, only judge. No silent writes.
+    """
+    # Load vault configuration
+    if vault_path:
+        config = TotemConfig(vault_path=Path(vault_path))
+    else:
+        config = TotemConfig.from_env()
+    
+    paths = VaultPaths.from_config(config)
+
+    # Check if vault exists
+    if not paths.system.exists():
+        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
+
+    # Determine date string (today if not provided)
+    if date:
+        date_str = date
+    else:
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Determine queue path
+    if queue_path:
+        review_queue_file = Path(queue_path)
+    else:
+        review_queue_file = paths.review_queue_file
+
+    # Show mode
+    if dry_run:
+        console.print("[yellow]DRY-RUN MODE[/yellow] — No artifacts will be written\n")
+    
+    console.print(f"[dim]Date: {date_str}[/dim]")
+    console.print(f"[dim]Queue: {review_queue_file}[/dim]\n")
+
+    # Load or create proposals
+    console.print("[dim]Loading proposals...[/dim]")
+    proposals = load_or_create_proposals(paths, date_str)
+    
+    if not proposals:
+        console.print("[yellow]No proposals to review.[/yellow]")
+        console.print(f"[dim]Run 'totem distill --date {date_str}' first to generate proposals.[/dim]")
+        return
+
+    console.print(f"[green]Found {len(proposals)} proposal(s) to review.[/green]\n")
+
+    # Initialize components
+    review_queue = ReviewQueue(review_queue_file)
+    learning_logger = LearningEventLogger(paths.review_events_file)
+    ledger_writer = LedgerWriter(paths.ledger_file)
+
+    # Create and run session
+    session = ReviewSession(
+        review_queue=review_queue,
+        learning_logger=learning_logger,
+        vault_paths=paths,
+        ledger_writer=ledger_writer,
+        dry_run=dry_run,
+        output_fn=print,  # Use print for terminal output
+    )
+
+    try:
+        summary = session.run(limit=limit)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Review session interrupted.[/yellow]")
+        summary = session._get_summary()
+
+    # Display summary
+    console.print("\n" + "=" * 40)
+    console.print("[bold]Review Session Summary[/bold]")
+    console.print("=" * 40)
+    console.print(f"  Approved:  {summary['approved']}")
+    console.print(f"  Vetoed:    {summary['vetoed']}")
+    console.print(f"  Corrected: {summary['corrected']}")
+    console.print(f"  Deferred:  {summary['deferred']}")
+    console.print(f"  [bold]Total:     {summary['total']}[/bold]")
+    
+    if dry_run:
+        console.print("\n[yellow]DRY-RUN: No changes were made.[/yellow]")
+    else:
+        console.print(f"\n[dim]Learning events logged to: {paths.review_events_file}[/dim]")
 
 
 @app.command()

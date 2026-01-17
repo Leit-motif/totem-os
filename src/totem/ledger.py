@@ -46,6 +46,13 @@ class LedgerWriter:
             "TASKS_UPDATED",
             "MEMORY_PROMOTED",
             "CORRECTION_APPLIED",
+            # Milestone 6: Review events
+            "REVIEW_APPROVED",
+            "REVIEW_VETOED",
+            "REVIEW_DEFERRED",
+            "REVIEW_CORRECTED",
+            # Milestone 7: Intent Arbiter
+            "INTENT_DECISION",
         ],
         payload: dict,
         capture_id: str | None = None,

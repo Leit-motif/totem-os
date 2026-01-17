@@ -30,6 +30,13 @@ class LedgerEvent(BaseModel):
         "TASKS_UPDATED",
         "MEMORY_PROMOTED",
         "CORRECTION_APPLIED",
+        # Milestone 6: Review events
+        "REVIEW_APPROVED",
+        "REVIEW_VETOED",
+        "REVIEW_DEFERRED",
+        "REVIEW_CORRECTED",
+        # Milestone 7: Intent Arbiter
+        "INTENT_DECISION",
     ] = Field(description="Event type")
     capture_id: str | None = Field(default=None, description="Related capture ID if applicable")
     payload: dict = Field(default_factory=dict, description="Event-specific data")

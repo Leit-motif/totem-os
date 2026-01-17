@@ -177,3 +177,157 @@ The scaffold is ready for:
 ✅ **Pydantic for schemas**: Used for config validation
 ✅ **No premature abstractions**: Simple, direct implementations
 ✅ **No new frameworks**: Only specified dependencies (Typer, Pydantic, Rich)
+
+---
+
+## Milestone 6: Totem Review + Correct
+
+### Philosophy
+
+Totem behaves like a junior mind presenting proposed artifacts for judgment.
+The user never categorizes/tags/files — only approves, vetoes, corrects, or defers.
+No silent writes. No background auto-canonization.
+
+### CLI Command: `totem review`
+
+Interactive single-keystroke review loop for proposed artifacts:
+
+```bash
+# Launch review session
+totem review
+
+# Review with date and limit
+totem review --date 2026-01-14 --limit 5
+
+# Custom queue location
+totem review --queue /path/to/queue.jsonl
+
+# Dry-run mode (preview without writes)
+totem review --dry-run
+```
+
+**Single-keystroke actions:**
+- `[A]pprove` — Write proposal to canon
+- `[V]eto` — Discard proposal (logs learning event)
+- `[C]orrect` — Override with corrected artifact
+- `[D]efer` — Keep in queue for later
+- `[Q]uit` — Exit review session
+
+### Data Models
+
+#### ProposedArtifact
+```python
+proposal_id: str         # UUID
+capture_id: str | None   # Source capture reference
+run_id: str | None       # Processing run reference
+artifact_type: ArtifactType  # task/note/principle/memory/decision/entity
+title: str | None        # Optional title
+content: str             # Main content
+destination: str         # Canonical path or bucket
+rationale: str           # 1-2 sentences why proposed
+confidence: float        # 0.0-1.0
+created_at: str          # ISO8601 timestamp
+```
+
+#### OverrideArtifact
+```python
+override_id: str         # UUID
+proposal_id: str         # Original proposal reference
+original_summary: str    # Compact summary of original
+corrected_artifact_type: ArtifactType
+corrected_title: str | None
+corrected_content: str
+corrected_destination: str | None
+created_at: str
+```
+
+#### ReviewQueueItem
+```python
+proposal: ProposedArtifact
+status: ProposalStatus   # PENDING/APPROVED/VETOED/CORRECTED/DEFERRED
+status_changed_at: str | None
+defer_count: int
+```
+
+### File Locations
+
+| Purpose | Location |
+|---------|----------|
+| Review queue | `10_derived/review_queue/proposals.jsonl` |
+| Learning events | `90_system/learning/review_events.jsonl` |
+| Override records | `10_derived/corrections/overrides/YYYY-MM-DD/` |
+
+### Learning Events
+
+Events emitted to `review_events.jsonl` for future learning:
+- `review_approved` — User approved proposal
+- `review_vetoed` — User vetoed proposal
+- `review_deferred` — User deferred decision
+- `review_corrected` — User corrected proposal (includes override details)
+
+Each event includes: `proposal_id`, `capture_id`, `run_id`, `artifact_type`, timestamp, and event-specific payload.
+
+### Ledger Events
+
+New ledger event types:
+- `REVIEW_APPROVED`
+- `REVIEW_VETOED`
+- `REVIEW_DEFERRED`
+- `REVIEW_CORRECTED`
+
+### Correction Mode UX
+
+When user presses `C`:
+1. Prompt for artifact type (default: original)
+2. Prompt for title (optional; default: original)
+3. Multiline content input (end with `.` on its own line)
+4. Prompt for destination (optional; default: original)
+5. Confirmation: `[A]pprove corrected` or `[V]cancel correction`
+
+On approve corrected:
+- Write corrected artifact to canon
+- Save override record linking to original
+- Mark proposal as CORRECTED
+- Log learning event with override details
+
+### Testing
+
+39 tests covering:
+- ✅ Approve path writes canon + logs event
+- ✅ Veto path does NOT write canon + logs event
+- ✅ Correct path writes corrected artifact + logs override event
+- ✅ Defer keeps item in queue with incremented count
+- ✅ Dry-run mode doesn't modify anything
+- ✅ Session processes multiple items
+- ✅ Quit stops processing
+- ✅ Limit parameter works
+- ✅ Empty queue handled gracefully
+
+### Implementation Files
+
+```
+src/totem/
+  models/review.py      # ProposedArtifact, OverrideArtifact, ReviewEvent models
+  review.py             # ReviewQueue, LearningEventLogger, ReviewSession
+  cli.py                # totem review command (updated)
+  paths.py              # Added learning/ directory (updated)
+  models/ledger.py      # Added review event types (updated)
+  ledger.py             # Added review event types (updated)
+tests/
+  test_review.py        # 39 comprehensive tests
+```
+
+### Cross-Platform Keystroke Capture
+
+Uses `msvcrt` on Windows, `termios`/`tty` on Unix.
+`KeyInputSource` abstraction enables test injection of key sequences.
+
+### Adherence to Constraints
+
+✅ **Single keystroke** behavior in standard terminal
+✅ **No multi-step prompts** except in Correct mode
+✅ **Testable** via injectable key sequences
+✅ **No new dependencies** (uses stdlib for terminal I/O)
+✅ **Deterministic** — all actions require explicit user input
+✅ **Append-only** — queue and events are JSONL
+✅ **Reversible** — override records enable audit trail
