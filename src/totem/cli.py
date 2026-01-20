@@ -247,6 +247,219 @@ def capture(
         raise typer.Exit(code=1)
 
 
+omi_app = typer.Typer(help="Omi transcript commands")
+app.add_typer(omi_app, name="omi")
+
+
+@omi_app.command("sync")
+def omi_sync(
+    date: str = typer.Option(
+        None,
+        "--date",
+        "-d",
+        help="Date to sync (YYYY-MM-DD, default: today)",
+    ),
+    sync_all: bool = typer.Option(
+        False,
+        "--all",
+        "-a",
+        help="Sync entire conversation history",
+    ),
+    vault_path: str = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Path to Totem vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
+    ),
+):
+    """Sync Omi transcripts to Obsidian vault.
+    
+    By default, it syncs transcripts for today. Use --date for a 
+    specific day, or --all to sync your entire history.
+    
+    Fetches conversations from Omi API and writes transcripts to:
+    $TOTEM_VAULT_PATH/Omi Transcripts/YYYY/MM/YYYY-MM-DD.md
+    
+    Idempotent: running multiple times will not create duplicates.
+    """
+    import os
+    from datetime import datetime, timezone
+    from pathlib import Path
+    from collections import defaultdict
+    
+    from .omi.client import OmiClient
+    from .omi.writer import write_transcripts_to_vault
+    from .omi.trace import write_sync_trace
+    
+    # Try to load OMI_API_KEY from .env if not in environment
+    if not os.environ.get("OMI_API_KEY") and Path(".env").exists():
+        for line in Path(".env").read_text().splitlines():
+            if "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                if k.strip() == "OMI_API_KEY":
+                    os.environ["OMI_API_KEY"] = v.strip().strip('"').strip("'")
+                    break
+
+    # Read Obsidian vault path from env var or use default
+    obsidian_vault_str = os.getenv("TOTEM_VAULT_PATH", "/Users/amrit/My Obsidian Vault")
+    obsidian_vault = Path(obsidian_vault_str)
+    
+    # Load Totem vault configuration for ledger
+    if vault_path:
+        config = TotemConfig(vault_path=Path(vault_path))
+    else:
+        config = TotemConfig.from_env()
+    
+    paths = VaultPaths.from_config(config)
+    
+    # Check if Totem vault exists
+    if not paths.system.exists():
+        console.print(f"[red]Error: Totem vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
+    
+    # Determine date range
+    if sync_all:
+        # Start from a distant past to get everything
+        start_date = datetime(2020, 1, 1, 0, 0, 0)
+        end_date = datetime.now()
+        console.print("[cyan]Syncing all Omi history...[/cyan]")
+    else:
+        # Determine specific date (today if not provided)
+        if date:
+            date_str = date
+            try:
+                datetime.strptime(date_str, "%Y-%m-%d")
+            except ValueError:
+                console.print(f"[red]Error: Invalid date format '{date_str}'. Use YYYY-MM-DD[/red]")
+                raise typer.Exit(code=1)
+        else:
+            date_str = datetime.now().strftime("%Y-%m-%d")
+        
+        console.print(f"[cyan]Syncing Omi transcripts for {date_str}...[/cyan]")
+        year, month, day = map(int, date_str.split("-"))
+        start_date = datetime(year, month, day, 0, 0, 0)
+        end_date = datetime(year, month, day, 23, 59, 59)
+    
+    # Initialize ledger writer
+    ledger_writer = LedgerWriter(paths.ledger_file)
+    
+    try:
+        # Initialize Omi client
+        client = OmiClient()
+        
+        # Track timing
+        sync_start = datetime.now(timezone.utc)
+        
+        # Fetch conversations
+        console.print("[dim]Fetching conversations from Omi API...[/dim]")
+        conversations = client.fetch_conversations(start_date, end_date)
+        
+        if not conversations:
+            label = "history" if sync_all else date_str
+            console.print(f"[yellow]No conversations found for {label}[/yellow]")
+            return
+        
+        console.print(f"[dim]Found {len(conversations)} conversation(s) total[/dim]")
+        
+        # Group conversations by date
+        by_date = defaultdict(list)
+        for conv in conversations:
+            # Use started_at to determine the daily file
+            d_str = conv.started_at.strftime("%Y-%m-%d")
+            by_date[d_str].append(conv)
+            
+        # Extract metadata for trace
+        conversation_ids = [conv.id for conv in conversations]
+        
+        # Log fetch event
+        ledger_writer.append_event(
+            event_type="OMI_SYNC_FETCHED",
+            payload={
+                "range_start": start_date.isoformat(),
+                "range_end": end_date.isoformat(),
+                "conversations_count": len(conversations),
+                "api_endpoint": f"{client.BASE_URL}/user/conversations",
+                "sync_all": sync_all
+            },
+        )
+        
+        # Process each date
+        total_written = 0
+        total_skipped = 0
+        days_processed = 0
+        
+        # Sort keys so we write in chronological order
+        for d_str in sorted(by_date.keys()):
+            day_convs = by_date[d_str]
+            console.print(f"[dim]Processing {d_str} ({len(day_convs)} convs)...[/dim]")
+            
+            result = write_transcripts_to_vault(
+                conversations=day_convs,
+                date_str=d_str,
+                vault_root=obsidian_vault,
+                ledger_writer=ledger_writer,
+            )
+            
+            total_written += result.segments_written
+            total_skipped += result.segments_skipped
+            days_processed += 1
+        
+        sync_end = datetime.now(timezone.utc)
+        
+        # Write trace (using the target date of the run or "bulk" if all)
+        trace_date_label = "history" if sync_all else date_str
+        
+        # If bulk sync, we'll use today's folder for the trace
+        trace_folder_date = datetime.now().strftime("%Y-%m-%d")
+        
+        # Create a combined result for trace
+        from .models.omi import OmiSyncResult
+        combined_result = OmiSyncResult(
+            date=trace_date_label,
+            conversations_count=len(conversations),
+            segments_written=total_written,
+            segments_skipped=total_skipped,
+            file_path=obsidian_vault # Reference path
+        )
+        
+        write_sync_trace(
+            sync_result=combined_result,
+            run_id=ledger_writer.run_id,
+            vault_paths=paths,
+            date_str=trace_folder_date,
+            start_time=sync_start,
+            end_time=sync_end,
+            api_endpoint=f"{client.BASE_URL}/user/conversations",
+            api_params={
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "include_transcript": "true",
+                "limit": 100,
+                "sync_all": sync_all
+            },
+            conversation_ids=conversation_ids,
+        )
+        
+        # Display summary
+        console.print()
+        console.print("[bold green]Sync complete![/bold green]")
+        console.print(f"  Days processed: {days_processed}")
+        console.print(f"  Total conversations found: {len(conversations)}")
+        console.print(f"  New segments written: {total_written}")
+        console.print(f"  Existing segments skipped: {total_skipped}")
+        
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        console.print(f"[red]Error during sync: {e}[/red]")
+        # stack trace for debugging if needed
+        # raise
+        raise typer.Exit(code=1)
+
+
+
 ledger_app = typer.Typer(help="Ledger commands")
 app.add_typer(ledger_app, name="ledger")
 

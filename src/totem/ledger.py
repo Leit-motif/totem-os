@@ -53,6 +53,9 @@ class LedgerWriter:
             "REVIEW_CORRECTED",
             # Milestone 7: Intent Arbiter
             "INTENT_DECISION",
+            # Milestone 7.5: Omi sync events
+            "OMI_SYNC_FETCHED",
+            "OMI_TRANSCRIPT_WRITTEN",
         ],
         payload: dict,
         capture_id: str | None = None,

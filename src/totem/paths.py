@@ -38,6 +38,7 @@ class VaultPaths:
         self.traces = self.system / "traces"
         self.traces_writes = self.traces / "writes"
         self.traces_routing = self.traces / "routing"
+        self.traces_omi = self.traces / "omi"
         self.learning = self.system / "learning"
         
         # System files
@@ -75,6 +76,7 @@ class VaultPaths:
             self.traces,
             self.traces_writes,
             self.traces_routing,
+            self.traces_omi,
             self.learning,
         ]
 
@@ -144,6 +146,17 @@ class VaultPaths:
         """
         return self.traces_routing / date_str
 
+    def traces_omi_date_folder(self, date_str: str) -> Path:
+        """Get path to traces/omi folder for a specific date.
+        
+        Args:
+            date_str: Date in YYYY-MM-DD format
+            
+        Returns:
+            Path to the traces/omi date folder
+        """
+        return self.traces_omi / date_str
+
     def daily_note_path(self, date_str: str) -> Path:
         """Get path to daily note for a specific date.
         
@@ -154,3 +167,4 @@ class VaultPaths:
             Path to the daily note markdown file
         """
         return self.daily / f"{date_str}.md"
+

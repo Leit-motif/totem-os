@@ -8,3 +8,6 @@ pydantic>=2.0.0
 
 # Terminal output
 rich>=13.0.0
+
+# HTTP client for API calls
+requests>=2.31.0
