@@ -21,7 +21,8 @@ class OmiTranscriptSegment(BaseModel):
 class OmiConversation(BaseModel):
     """An Omi conversation with transcript segments.
     
-    Represents a complete conversation recording with all transcript segments.
+    Represents a complete conversation recording with all transcript segments
+    and optional metadata from Omi API.
     """
     
     id: str = Field(..., description="Unique conversation identifier")
@@ -31,6 +32,16 @@ class OmiConversation(BaseModel):
         default_factory=list,
         description="List of transcript segments in order"
     )
+    
+    # Optional metadata fields from Omi API
+    overview: str | None = Field(None, description="Short summary of the conversation")
+    action_items: list[str] = Field(
+        default_factory=list,
+        description="List of action items/tasks from the conversation"
+    )
+    category: str | None = Field(None, description="Conversation category")
+    emoji: str | None = Field(None, description="Associated emoji")
+    location: str | None = Field(None, description="Geolocation/location string")
 
 
 class OmiSyncResult(BaseModel):
@@ -44,3 +55,18 @@ class OmiSyncResult(BaseModel):
     segments_written: int = Field(..., description="Number of new segments written")
     segments_skipped: int = Field(..., description="Number of duplicate segments skipped")
     file_path: Path = Field(..., description="Path to written markdown file")
+
+
+class DailyNoteResult(BaseModel):
+    """Result of a daily note Omi block write operation.
+    
+    Contains information about what was written to the daily note.
+    """
+    
+    date: str = Field(..., description="Date of daily note (YYYY-MM-DD)")
+    daily_note_path: Path = Field(..., description="Path to daily note file")
+    transcript_wikilink: str = Field(..., description="Wikilink to transcript file")
+    conversations_count: int = Field(..., description="Number of conversations aggregated")
+    action_items_count: int = Field(..., description="Total number of action items")
+    marker_status: str = Field("new", description="Status of markers: new, existing, recovered")
+    block_replaced: bool = Field(False, description="Whether an existing block was replaced")

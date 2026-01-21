@@ -40,6 +40,8 @@ class LedgerEvent(BaseModel):
         # Milestone 7.5: Omi sync events
         "OMI_SYNC_FETCHED",
         "OMI_TRANSCRIPT_WRITTEN",
+        "OMI_DAILY_NOTE_WRITTEN",
+        "OMI_DAILY_NOTE_BLOCK_MALFORMED",
     ] = Field(description="Event type")
     capture_id: str | None = Field(default=None, description="Related capture ID if applicable")
     payload: dict = Field(default_factory=dict, description="Event-specific data")

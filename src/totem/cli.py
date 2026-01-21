@@ -271,6 +271,11 @@ def omi_sync(
         "-v",
         help="Path to Totem vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
     ),
+    write_daily_note: bool = typer.Option(
+        True,
+        "--write-daily-note/--no-write-daily-note",
+        help="Write summary block to Obsidian daily note (default: True)",
+    ),
 ):
     """Sync Omi transcripts to Obsidian vault.
     
@@ -288,6 +293,7 @@ def omi_sync(
     from collections import defaultdict
     
     from .omi.client import OmiClient
+    from .omi.daily_note import write_daily_note_omi_block
     from .omi.writer import write_transcripts_to_vault
     from .omi.trace import write_sync_trace
     
@@ -401,6 +407,20 @@ def omi_sync(
                 ledger_writer=ledger_writer,
             )
             
+            # Write daily note block if requested
+            daily_note_result = None
+            if write_daily_note:
+                try:
+                    daily_note_result = write_daily_note_omi_block(
+                        conversations=day_convs,
+                        date_str=d_str,
+                        vault_root=obsidian_vault,
+                        ledger_writer=ledger_writer,
+                    )
+                    console.print(f"[green]  + Updated daily note: {daily_note_result.daily_note_path.name}[/green]")
+                except Exception as e:
+                    console.print(f"[red]  ! Failed to write daily note: {e}[/red]")
+            
             total_written += result.segments_written
             total_skipped += result.segments_skipped
             days_processed += 1
@@ -436,9 +456,11 @@ def omi_sync(
                 "end_date": end_date.isoformat(),
                 "include_transcript": "true",
                 "limit": 100,
-                "sync_all": sync_all
+                "sync_all": sync_all,
+                "write_daily_note": write_daily_note
             },
             conversation_ids=conversation_ids,
+            daily_note_written=write_daily_note and days_processed > 0,  # Rough approximation for trace metadata
         )
         
         # Display summary

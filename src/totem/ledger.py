@@ -56,6 +56,9 @@ class LedgerWriter:
             # Milestone 7.5: Omi sync events
             "OMI_SYNC_FETCHED",
             "OMI_TRANSCRIPT_WRITTEN",
+            # Milestone 7.6: Omi daily note
+            "OMI_DAILY_NOTE_WRITTEN",
+            "OMI_DAILY_NOTE_BLOCK_MALFORMED",
         ],
         payload: dict,
         capture_id: str | None = None,

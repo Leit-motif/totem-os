@@ -18,6 +18,7 @@ def write_sync_trace(
     api_endpoint: str,
     api_params: dict,
     conversation_ids: list[str],
+    daily_note_written: bool = False,
 ) -> Path:
     """Write trace JSON for Omi sync operation.
     
@@ -34,6 +35,7 @@ def write_sync_trace(
         api_endpoint: API endpoint URL
         api_params: API request parameters
         conversation_ids: List of conversation IDs synced
+        daily_note_written: Whether daily notes were written
         
     Returns:
         Path to written trace file
@@ -66,6 +68,7 @@ def write_sync_trace(
             "segments_skipped": sync_result.segments_skipped,
             "file_path": str(sync_result.file_path),
         },
+        "daily_note_written": daily_note_written,
         "duration_ms": duration_ms,
     }
     

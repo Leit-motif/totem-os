@@ -126,12 +126,40 @@ class OmiClient:
                 )
                 segments.append(segment)
         
+        # Parse optional metadata fields
+        # Try both top-level and structured_data locations
+        structured = data.get("structured", {})
+        
+        overview = data.get("overview") or structured.get("overview")
+        
+        # Action items can be in various formats
+        action_items_raw = data.get("action_items") or structured.get("action_items") or []
+        action_items = []
+        if isinstance(action_items_raw, list):
+            # Could be list of strings or list of dicts with 'description' field
+            for item in action_items_raw:
+                if isinstance(item, str):
+                    action_items.append(item)
+                elif isinstance(item, dict) and "description" in item:
+                    action_items.append(item["description"])
+                elif isinstance(item, dict) and "text" in item:
+                    action_items.append(item["text"])
+        
+        category = data.get("category") or structured.get("category")
+        emoji = data.get("emoji") or structured.get("emoji")
+        location = data.get("location") or structured.get("location")
+        
         # Parse conversation
         return OmiConversation(
             id=data["id"],
             started_at=self._parse_timestamp(data.get("started_at") or data.get("created_at")),
             finished_at=self._parse_timestamp(data.get("finished_at") or data.get("created_at")),
             transcript=segments,
+            overview=overview,
+            action_items=action_items,
+            category=category,
+            emoji=emoji,
+            location=location,
         )
     
     def _parse_timestamp(self, ts: str | None) -> datetime:
