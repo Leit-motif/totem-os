@@ -605,26 +605,33 @@ class TestDailyNote:
             result = daily_note.write_daily_note_chatgpt_block(
                 conversations,
                 "2022-01-01",
-                daily_dir,
-                Mock(),  # ledger_writer
-                {"conv_1": daily_dir.parent / "chatgpt" / "2022" / "01" / "01" / "Morning Chat.md"},
                 daily_dir.parent,
+                Mock(),  # ledger_writer
+                {"conv_1": daily_dir.parent / "40_Chatgpt" / "conversations" / "2022" / "01" / "01" / "Morning Chat.md"},
             )
 
-            daily_file = daily_dir / "2022-01-01.md"
+            daily_file = (
+                daily_dir.parent
+                / "5.0 Journal"
+                / "5.1 Daily"
+                / "2022"
+                / "01"
+                / "2022-01-01.md"
+            )
             assert daily_file.exists()
 
             content = daily_file.read_text()
             assert "<!-- TOTEM:CHATGPT:START -->" in content
             assert "<!-- TOTEM:CHATGPT:END -->" in content
             assert "Morning Chat" in content
-            assert "[[chatgpt/2022/01/01/Morning Chat|Morning Chat]]" in content
+            assert "[[Morning Chat]]" in content
 
     def test_write_daily_note_chatgpt_block_existing(self):
         """Test updating existing daily note block."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            daily_dir = Path(temp_dir) / "daily"
-            daily_dir.mkdir()
+            vault_root = Path(temp_dir)
+            daily_dir = vault_root / "5.0 Journal" / "5.1 Daily" / "2022" / "01"
+            daily_dir.mkdir(parents=True, exist_ok=True)
 
             # Create existing daily note with old block
             daily_file = daily_dir / "2022-01-01.md"
@@ -634,7 +641,7 @@ Some existing content.
 
 <!-- TOTEM:CHATGPT:START -->
 ## ChatGPT
-- [[../chatgpt/2022-01-01/chatgpt__old_conv|Old Conversation]] (09:00)
+- [[40_Chatgpt/conversations/2022/01/01/Old Conversation]]
 <!-- TOTEM:CHATGPT:END -->
 """)
 
@@ -651,10 +658,9 @@ Some existing content.
             result = daily_note.write_daily_note_chatgpt_block(
                 conversations,
                 "2022-01-01",
-                daily_dir,
+                vault_root,
                 Mock(),  # ledger_writer
-                {"new_conv": daily_dir.parent / "chatgpt" / "2022" / "01" / "01" / "New Conversation.md"},
-                daily_dir.parent,
+                {"new_conv": vault_root / "40_Chatgpt" / "conversations" / "2022" / "01" / "01" / "New Conversation.md"},
             )
 
             content = daily_file.read_text()
@@ -662,7 +668,7 @@ Some existing content.
             assert "New Conversation" in content
             assert "Old Conversation" not in content  # Replaced
             assert content.count("<!-- TOTEM:CHATGPT:START -->") == 1  # No duplicates
-            assert "[[chatgpt/2022/01/01/New Conversation|New Conversation]]" in content
+            assert "[[New Conversation]]" in content
 
 
 class TestState:
@@ -1162,9 +1168,10 @@ class TestLocalZipIngest:
         )
         return TotemConfig(vault_path=vault_root, chatgpt_export=chatgpt_config)
 
-    def test_ingest_from_zip_success(self, tmp_path):
+    def test_ingest_from_zip_success(self, tmp_path, monkeypatch):
         vault_root = tmp_path / "vault"
         vault_root.mkdir(parents=True)
+        monkeypatch.setenv("TOTEM_VAULT_PATH", str(vault_root))
 
         config = self._make_config(vault_root)
         paths = VaultPaths.from_config(config)
@@ -1193,9 +1200,10 @@ class TestLocalZipIngest:
         note_paths = list(chatgpt_root.rglob("Test Conversation.md"))
         assert note_paths
 
-    def test_ingest_from_downloads_picks_newest_valid_zip(self, tmp_path):
+    def test_ingest_from_downloads_picks_newest_valid_zip(self, tmp_path, monkeypatch):
         vault_root = tmp_path / "vault"
         vault_root.mkdir(parents=True)
+        monkeypatch.setenv("TOTEM_VAULT_PATH", str(vault_root))
 
         config = self._make_config(vault_root)
         paths = VaultPaths.from_config(config)

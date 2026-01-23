@@ -25,10 +25,9 @@ class DailyNoteResult(BaseModel):
 def write_daily_note_chatgpt_block(
     conversations: List[ChatGptConversation],
     date_str: str,
-    obsidian_daily_dir: Path,
+    vault_root: Path,
     ledger_writer: LedgerWriter,
     conversation_note_paths: Optional[Dict[str, Path]] = None,
-    vault_root: Optional[Path] = None,
 ) -> DailyNoteResult:
     """Write or update ChatGPT block in daily note with idempotency.
 
@@ -37,7 +36,7 @@ def write_daily_note_chatgpt_block(
     Args:
         conversations: List of conversations for this date
         date_str: Date string (YYYY-MM-DD)
-        obsidian_daily_dir: Directory containing daily notes
+        vault_root: Root path of Obsidian vault
         ledger_writer: Ledger writer for events
 
     Returns:
@@ -64,10 +63,9 @@ def write_daily_note_chatgpt_block(
         result = _write_single_date_block(
             day_convos,
             conv_date_str,
-            obsidian_daily_dir,
+            vault_root,
             ledger_writer,
             conversation_note_paths,
-            vault_root,
         )
         total_processed += result.conversations_count
         if result.block_replaced:
@@ -75,7 +73,10 @@ def write_daily_note_chatgpt_block(
         marker_status = result.marker_status
 
     # Return result for the primary date
-    daily_note_path = obsidian_daily_dir / f"{date_str}.md"
+    year, month, _day = date_str.split("-")
+    daily_note_path = (
+        vault_root / "5.0 Journal" / "5.1 Daily" / year / month / f"{date_str}.md"
+    )
 
     return DailyNoteResult(
         date=date_str,
@@ -89,10 +90,9 @@ def write_daily_note_chatgpt_block(
 def _write_single_date_block(
     conversations: List[ChatGptConversation],
     date_str: str,
-    obsidian_daily_dir: Path,
+    vault_root: Path,
     ledger_writer: LedgerWriter,
     conversation_note_paths: Optional[Dict[str, Path]] = None,
-    vault_root: Optional[Path] = None,
 ) -> DailyNoteResult:
     """Write ChatGPT block for a single date."""
     # Sort conversations by creation time
@@ -104,30 +104,24 @@ def _write_single_date_block(
     sorted_conversations = sorted(conversations, key=sort_key)
 
     # Create daily note path
-    daily_note_path = obsidian_daily_dir / f"{date_str}.md"
+    year, month, _day = date_str.split("-")
+    daily_note_dir = vault_root / "5.0 Journal" / "5.1 Daily" / year / month
+    daily_note_dir.mkdir(parents=True, exist_ok=True)
+    daily_note_path = daily_note_dir / f"{date_str}.md"
 
     # Build ChatGPT block content
-    block_lines = ["<!-- TOTEM:CHATGPT:START -->", "## ChatGPT", ""]
+    block_lines = ["<!-- TOTEM:CHATGPT:START -->", "## Transcripts", ""]
 
     for conv in sorted_conversations:
-        # Format time
-        if conv.created_at:
-            time_str = conv.created_at.astimezone().strftime("%H:%M")
-        else:
-            time_str = "00:00"
-
         # Create path-qualified link to conversation note
-        relative_path = _build_conversation_link_path(
+        link_path = _build_conversation_link_path(
             conv,
             date_str,
             conversation_note_paths,
             vault_root,
         )
 
-        # Escape title for markdown link
-        safe_title = conv.title.replace("[", "\\[").replace("]", "\\]").replace("|", "\\|")
-
-        block_lines.append(f"- [[{relative_path}|{safe_title}]] ({time_str})")
+        block_lines.append(f"- [[{link_path}]]")
 
     block_lines.extend(["", "<!-- TOTEM:CHATGPT:END -->"])
     chatgpt_block = "\n".join(block_lines)
@@ -219,22 +213,26 @@ def _build_conversation_link_path(
     conversation: ChatGptConversation,
     date_str: str,
     conversation_note_paths: Optional[Dict[str, Path]],
-    vault_root: Optional[Path],
+    vault_root: Path,
 ) -> str:
     """Build vault-relative path for a conversation note."""
     if conversation_note_paths and conversation.conversation_id in conversation_note_paths:
         note_path = conversation_note_paths[conversation.conversation_id]
-        if vault_root:
-            try:
-                relative = note_path.relative_to(vault_root)
-                return relative.with_suffix("").as_posix()
-            except ValueError:
-                pass
-        return note_path.with_suffix("").as_posix()
+        try:
+            relative = note_path.relative_to(vault_root)
+            return relative.stem
+        except ValueError:
+            pass
+        return note_path.stem
 
     if conversation.created_at:
         local_date = conversation.created_at.astimezone()
         date_str = local_date.strftime("%Y-%m-%d")
 
     year, month, day = date_str.split("-")
-    return f"../chatgpt/{year}/{month}/{day}/chatgpt__{conversation.conversation_id}"
+    safe_title = "".join(
+        c for c in conversation.title if c.isalnum() or c in " -_"
+    ).strip()
+    if not safe_title:
+        safe_title = "Placeholder Title"
+    return safe_title

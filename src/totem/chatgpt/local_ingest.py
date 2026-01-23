@@ -1,6 +1,7 @@
 """Local ZIP ingestion for ChatGPT exports."""
 
 import logging
+import os
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -126,9 +127,9 @@ def ingest_from_zip(
 
         obsidian_chatgpt_dir = vault_paths.root / config.chatgpt_export.obsidian_chatgpt_dir
         obsidian_chatgpt_dir.mkdir(parents=True, exist_ok=True)
-        obsidian_daily_dir = vault_paths.root / config.chatgpt_export.obsidian_daily_dir
-        obsidian_daily_dir.mkdir(parents=True, exist_ok=True)
+        obsidian_vault = Path(os.getenv("TOTEM_VAULT_PATH", "/Users/amrit/My Obsidian Vault"))
         written_notes = []
+        conversation_note_paths = {}
         for conv in parsed_result.conversations:
             note_path = write_conversation_note(
                 conv,
@@ -138,15 +139,17 @@ def ingest_from_zip(
                 run_date_str=run_date_str,
             )
             written_notes.append(note_path)
+            conversation_note_paths[conv.conversation_id] = note_path
 
-        enable_daily_notes = False  # Guarded for now; re-enable when ready.
+        enable_daily_notes = True
         daily_result = None
         if enable_daily_notes:
             daily_result = write_daily_note_chatgpt_block(
                 parsed_result.conversations,
                 run_date_str,
-                obsidian_daily_dir,
+                obsidian_vault,
                 ledger_writer,
+                conversation_note_paths,
             )
 
         ledger_writer.append_event(

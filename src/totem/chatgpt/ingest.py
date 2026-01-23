@@ -1,6 +1,7 @@
 """Main ChatGPT export ingestion pipeline."""
 
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -399,6 +400,7 @@ def ingest_latest_export(
         # Write conversation notes
         obsidian_chatgpt_dir = vault_paths.root / config.chatgpt_export.obsidian_chatgpt_dir
         written_notes = []
+        conversation_note_paths = {}
 
         for conv in parsed_result.conversations:
             logger.info(f"Writing conversation: {conv.title}")
@@ -412,6 +414,7 @@ def ingest_latest_export(
                     run_date_str,
                 )
                 written_notes.append(note_path)
+                conversation_note_paths[conv.conversation_id] = note_path
             else:
                 logger.info(f"[DRY RUN] Would write conversation note for {conv.conversation_id}")
 
@@ -427,16 +430,17 @@ def ingest_latest_export(
             )
 
         # Update daily notes
-        obsidian_daily_dir = vault_paths.root / config.chatgpt_export.obsidian_daily_dir
+        obsidian_vault = Path(os.getenv("TOTEM_VAULT_PATH", "/Users/amrit/My Obsidian Vault"))
 
-        enable_daily_notes = False  # Guarded for now; re-enable when ready.
+        enable_daily_notes = True
         if enable_daily_notes:
             if not dry_run:
                 daily_result = write_daily_note_chatgpt_block(
                     parsed_result.conversations,
                     run_date_str,  # Use processing date
-                    obsidian_daily_dir,
+                    obsidian_vault,
                     ledger_writer,
+                    conversation_note_paths,
                 )
                 logger.info(f"Updated daily note: {daily_result.daily_note_path}")
             else:
