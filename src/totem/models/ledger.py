@@ -42,6 +42,24 @@ class LedgerEvent(BaseModel):
         "OMI_TRANSCRIPT_WRITTEN",
         "OMI_DAILY_NOTE_WRITTEN",
         "OMI_DAILY_NOTE_BLOCK_MALFORMED",
+        # Milestone 8: ChatGPT export ingestion
+        "CHATGPT_EXPORT_INGEST_STARTED",
+        "CHATGPT_EXPORT_EMAILS_FOUND",
+        "CHATGPT_EXPORT_EMAIL_SELECTED",
+        "CHATGPT_EXPORT_EMAIL_SKIPPED",
+        "CHATGPT_EXPORT_DOWNLOAD_STARTED",
+        "CHATGPT_EXPORT_DOWNLOADED",
+        "CHATGPT_EXPORT_UNZIPPED",
+        "CHATGPT_EXPORT_PARSED",
+        "CHATGPT_CONVERSATIONS_WRITTEN",
+        "CHATGPT_DAILY_NOTE_WRITTEN",
+        "CHATGPT_EXPORT_INGEST_COMPLETED",
+        "CHATGPT_EXPORT_INGEST_FAILED",
+        "CHATGPT_EXPORT_LOCAL_ZIP_SELECTED",
+        "CHATGPT_EXPORT_LOCAL_ZIP_INGEST_STARTED",
+        "CHATGPT_EXPORT_LOCAL_ZIP_INGESTED",
+        "CHATGPT_EXPORT_LOCAL_ZIP_INGEST_FAILED",
+        "CHATGPT_EXPORT_LOCAL_ZIP_NOT_FOUND",
     ] = Field(description="Event type")
     capture_id: str | None = Field(default=None, description="Related capture ID if applicable")
     payload: dict = Field(default_factory=dict, description="Event-specific data")

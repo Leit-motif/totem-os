@@ -1,5 +1,6 @@
 """Typer-based CLI for Totem OS."""
 
+import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +37,8 @@ app = typer.Typer(
     add_completion=False,
 )
 
+
+
 console = Console()
 
 
@@ -55,14 +58,11 @@ def init(
     ),
 ):
     """Initialize a new Totem OS vault with directory structure and system files.
-    
+
     This command is idempotent - it will not overwrite existing data.
     """
     # Load configuration from environment or use defaults
-    if vault_path:
-        config = TotemConfig(vault_path=Path(vault_path))
-    else:
-        config = TotemConfig.from_env()
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
     
     vault_root = config.vault_path
     paths = VaultPaths.from_config(config)
@@ -165,7 +165,7 @@ def capture(
         None,
         "--vault",
         "-v",
-        help="Path to vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
+        help="Path to vault directory (default: auto-discover from current directory)",
     ),
     date: str = typer.Option(
         None,
@@ -175,7 +175,7 @@ def capture(
     ),
 ):
     """Capture text or file into the vault inbox.
-    
+
     Creates raw file + .meta.json sidecar in 00_inbox/YYYY-MM-DD/.
     Appends CAPTURE_INGESTED event to ledger.jsonl.
     """
@@ -183,17 +183,13 @@ def capture(
     if not text and not file:
         console.print("[red]Error: Must provide either --text or --file[/red]")
         raise typer.Exit(code=1)
-    
+
     if text and file:
         console.print("[red]Error: Cannot provide both --text and --file[/red]")
         raise typer.Exit(code=1)
 
     # Load vault configuration
-    if vault_path:
-        config = TotemConfig(vault_path=Path(vault_path))
-    else:
-        config = TotemConfig.from_env()
-    
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
     paths = VaultPaths.from_config(config)
 
     # Check if vault exists
@@ -250,6 +246,9 @@ def capture(
 omi_app = typer.Typer(help="Omi transcript commands")
 app.add_typer(omi_app, name="omi")
 
+chatgpt_app = typer.Typer(help="ChatGPT export commands")
+app.add_typer(chatgpt_app, name="chatgpt")
+
 
 @omi_app.command("sync")
 def omi_sync(
@@ -269,7 +268,7 @@ def omi_sync(
         None,
         "--vault",
         "-v",
-        help="Path to Totem vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
+        help="Path to Totem vault directory (default: auto-discover from current directory)",
     ),
     write_daily_note: bool = typer.Option(
         True,
@@ -278,25 +277,25 @@ def omi_sync(
     ),
 ):
     """Sync Omi transcripts to Obsidian vault.
-    
-    By default, it syncs transcripts for today. Use --date for a 
+
+    By default, it syncs transcripts for today. Use --date for a
     specific day, or --all to sync your entire history.
-    
+
     Fetches conversations from Omi API and writes transcripts to:
     $TOTEM_VAULT_PATH/Omi Transcripts/YYYY/MM/YYYY-MM-DD.md
-    
+
     Idempotent: running multiple times will not create duplicates.
     """
     import os
     from datetime import datetime, timezone
     from pathlib import Path
     from collections import defaultdict
-    
+
     from .omi.client import OmiClient
     from .omi.daily_note import write_daily_note_omi_block
     from .omi.writer import write_transcripts_to_vault
     from .omi.trace import write_sync_trace
-    
+
     # Try to load OMI_API_KEY from .env if not in environment
     if not os.environ.get("OMI_API_KEY") and Path(".env").exists():
         for line in Path(".env").read_text().splitlines():
@@ -309,13 +308,9 @@ def omi_sync(
     # Read Obsidian vault path from env var or use default
     obsidian_vault_str = os.getenv("TOTEM_VAULT_PATH", "/Users/amrit/My Obsidian Vault")
     obsidian_vault = Path(obsidian_vault_str)
-    
+
     # Load Totem vault configuration for ledger
-    if vault_path:
-        config = TotemConfig(vault_path=Path(vault_path))
-    else:
-        config = TotemConfig.from_env()
-    
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
     paths = VaultPaths.from_config(config)
     
     # Check if Totem vault exists
@@ -481,6 +476,371 @@ def omi_sync(
         raise typer.Exit(code=1)
 
 
+@chatgpt_app.command("ingest-latest-export")
+def chatgpt_ingest_latest_export(
+    vault_path: str = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Path to vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Enable debug logging",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview mode: show what would be done without making changes",
+    ),
+    lookback_days: int = typer.Option(
+        None,
+        "--lookback-days",
+        help="Override default Gmail query lookback period in days",
+    ),
+    gmail_query: str = typer.Option(
+        None,
+        "--gmail-query",
+        help="Override Gmail query completely (for debugging)",
+    ),
+    allow_http_download: bool = typer.Option(
+        False,
+        "--allow-http-download",
+        help="Allow HTTP download for ChatGPT export URLs (not recommended)",
+    ),
+):
+    """Ingest the latest unprocessed ChatGPT export from Gmail.
+
+    Downloads the most recent export email, extracts conversations, and writes
+    Obsidian notes. Idempotent - safe to run repeatedly.
+
+    Requires Gmail API credentials and proper configuration.
+    """
+    # Load vault configuration
+    if vault_path:
+        config = TotemConfig(vault_path=Path(vault_path))
+    else:
+        config = TotemConfig.from_env()
+
+    paths = VaultPaths.from_config(config)
+
+    # Check if vault exists
+    if not paths.system.exists():
+        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
+
+    # Set up logging
+    import logging as _logging
+    log_level = _logging.DEBUG if debug else _logging.INFO
+    _logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+    # Initialize ledger writer
+    ledger_writer = LedgerWriter(paths.ledger_file)
+
+    try:
+        from .chatgpt.ingest import ingest_latest_export
+
+        success = ingest_latest_export(
+            config=config,
+            vault_paths=paths,
+            ledger_writer=ledger_writer,
+            debug=debug,
+            dry_run=dry_run,
+            lookback_days=lookback_days,
+            gmail_query_override=gmail_query,
+            allow_http_download=allow_http_download,
+        )
+
+        if success:
+            if dry_run:
+                console.print("[green]DRY RUN completed successfully - no changes made[/green]")
+            else:
+                console.print("[green]ChatGPT export ingestion completed successfully![/green]")
+        else:
+            console.print("[yellow]No new exports to process[/yellow]")
+
+    except Exception as e:
+        console.print(f"[red]Error during ingestion: {e}[/red]")
+        if debug:
+            import traceback
+            console.print(traceback.format_exc())
+        raise typer.Exit(code=1)
+
+
+@chatgpt_app.command("ingest-from-zip")
+def chatgpt_ingest_from_zip(
+    zip_path: str = typer.Argument(..., help="Path to a local ChatGPT export ZIP file"),
+    vault_path: str = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Path to vault directory (default: auto-discover from current directory)",
+    ),
+):
+    """Ingest a local ChatGPT export ZIP file."""
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
+    paths = VaultPaths.from_config(config)
+
+    if not paths.system.exists():
+        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
+
+    ledger_writer = LedgerWriter(paths.ledger_file)
+
+    try:
+        from .chatgpt.local_ingest import ingest_from_zip
+
+        ingest_from_zip(
+            config=config,
+            vault_paths=paths,
+            ledger_writer=ledger_writer,
+            zip_path=Path(zip_path),
+        )
+        console.print("[green]ChatGPT export ingestion completed successfully![/green]")
+
+    except Exception as e:
+        console.print(f"[red]Error during ingestion: {e}[/red]")
+        raise typer.Exit(code=1)
+
+
+@chatgpt_app.command("ingest-from-downloads")
+def chatgpt_ingest_from_downloads(
+    downloads_dir: str = typer.Option(
+        str(Path.home() / "Downloads"),
+        "--downloads-dir",
+        help="Directory to scan for ChatGPT export ZIPs (default: ~/Downloads)",
+    ),
+    limit: int = typer.Option(
+        50,
+        "--limit",
+        help="Maximum number of recent ZIP files to scan",
+    ),
+    vault_path: str = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Path to vault directory (default: auto-discover from current directory)",
+    ),
+):
+    """Find the newest ChatGPT export ZIP in downloads and ingest it."""
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
+    paths = VaultPaths.from_config(config)
+
+    if not paths.system.exists():
+        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
+
+    ledger_writer = LedgerWriter(paths.ledger_file)
+
+    try:
+        from .chatgpt.local_ingest import ingest_from_downloads
+
+        success = ingest_from_downloads(
+            config=config,
+            vault_paths=paths,
+            ledger_writer=ledger_writer,
+            downloads_dir=Path(downloads_dir),
+            limit=limit,
+        )
+
+        if success:
+            console.print("[green]ChatGPT export ingestion completed successfully![/green]")
+        else:
+            console.print(
+                f"[yellow]No valid ChatGPT export ZIP found in {downloads_dir}[/yellow]"
+            )
+
+    except Exception as e:
+        console.print(f"[red]Error during ingestion: {e}[/red]")
+        raise typer.Exit(code=1)
+
+
+@chatgpt_app.command("doctor")
+def chatgpt_doctor(
+    vault_path: str = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Path to vault directory (default: auto-discover from current directory)",
+    ),
+):
+    """Run diagnostic checks for ChatGPT export ingestion setup.
+
+    Validates configuration, directory permissions, and Gmail authentication.
+    """
+    # Load vault configuration
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
+    paths = VaultPaths.from_config(config)
+
+    # Check if vault exists
+    if not paths.system.exists():
+        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
+
+    try:
+        from .chatgpt.ingest import doctor_check
+
+        console.print("[cyan]Running ChatGPT ingestion diagnostics...[/cyan]")
+        results = doctor_check(config, paths)
+
+        # Report results
+        if results["config_valid"]:
+            console.print("[green]✓[/green] Configuration is valid")
+        else:
+            console.print("[red]✗[/red] Configuration has errors:")
+            for error in results["errors"]:
+                console.print(f"  [red]- {error}[/red]")
+
+        if results["directories_writable"]:
+            console.print("[green]✓[/green] All directories are writable")
+        else:
+            console.print("[red]✗[/red] Directory permission errors:")
+            for error in results["errors"]:
+                if "writable" in error:
+                    console.print(f"  [red]- {error}[/red]")
+
+        if results["obsidian_dirs_exist"]:
+            console.print("[green]✓[/green] Obsidian directories exist")
+        else:
+            console.print("[yellow]⚠[/yellow] Obsidian directory warnings:")
+            for warning in results["warnings"]:
+                console.print(f"  [yellow]- {warning}[/yellow]")
+
+        if results["gmail_auth_works"] is True:
+            console.print("[green]✓[/green] Gmail authentication successful")
+        elif results["gmail_auth_works"] is False:
+            console.print("[red]✗[/red] Gmail authentication failed")
+            for error in results["errors"]:
+                if "Gmail" in error:
+                    console.print(f"  [red]- {error}[/red]")
+        else:
+            console.print("[dim]○[/dim] Gmail authentication not tested")
+
+        # Summary
+        has_errors = bool(results["errors"])
+        has_warnings = bool(results["warnings"])
+
+        if has_errors:
+            console.print(f"\n[red]Found {len(results['errors'])} error(s) that need to be fixed[/red]")
+            raise typer.Exit(code=1)
+        elif has_warnings:
+            console.print(f"\n[yellow]Found {len(results['warnings'])} warning(s) - check Obsidian directory setup[/yellow]")
+        else:
+            console.print("\n[green]All checks passed![/green]")
+
+    except Exception as e:
+        console.print(f"[red]Error running diagnostics: {e}[/red]")
+        raise typer.Exit(code=1)
+
+
+@chatgpt_app.command("install-launchd")
+def chatgpt_install_launchd(
+    vault_path: str = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Path to vault directory (default: auto-discover from current directory)",
+    ),
+):
+    """Generate and install macOS LaunchAgent for automated ChatGPT export ingestion.
+
+    Creates a plist file in ~/Library/LaunchAgents/ and prints the load command.
+    Does NOT automatically load the agent - you must run the printed command manually.
+    """
+    import os
+    import platform
+    from pathlib import Path
+
+    # Check if we're on macOS
+    if platform.system() != "Darwin":
+        console.print("[red]Error: launchd is only available on macOS[/red]")
+        raise typer.Exit(code=1)
+
+    # Load vault configuration
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
+    paths = VaultPaths.from_config(config)
+
+    # Check if vault exists
+    if not paths.system.exists():
+        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
+
+    try:
+        # Determine paths
+        node_path = Path(os.sys.executable).resolve()
+        cli_path = Path(__file__).resolve()
+
+        # Create LaunchAgents directory if it doesn't exist
+        launch_agents_dir = Path.home() / "Library" / "LaunchAgents"
+        launch_agents_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate plist content
+        plist_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0//EN">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{config.launchd.label}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{node_path}</string>
+        <string>{cli_path}</string>
+        <string>chatgpt</string>
+        <string>ingest-latest-export</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>{config.launchd.interval_seconds}</integer>
+
+    <key>StandardOutPath</key>
+    <string>{paths.root / "logs" / "launchd_stdout.log"}</string>
+
+    <key>StandardErrorPath</key>
+    <string>{paths.root / "logs" / "launchd_stderr.log"}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TOTEM_VAULT</key>
+        <string>{config.vault_path}</string>
+    </dict>
+</dict>
+</plist>'''
+
+        # Write plist file
+        plist_path = launch_agents_dir / f"{config.launchd.label}.plist"
+        plist_path.write_text(plist_content, encoding='utf-8')
+
+        console.print(f"[green]Created launchd plist:[/green] {plist_path}")
+
+        # Create logs directory
+        logs_dir = paths.root / "logs"
+        logs_dir.mkdir(exist_ok=True)
+
+        console.print(f"[green]Created logs directory:[/green] {logs_dir}")
+
+        # Print load command
+        console.print("\n[cyan]To load and start the launch agent, run:[/cyan]")
+        console.print(f"[bold]launchctl load -w {plist_path}[/bold]")
+
+        console.print("\n[cyan]To unload the launch agent:[/cyan]")
+        console.print(f"[bold]launchctl unload -w {plist_path}[/bold]")
+
+        console.print("\n[cyan]To check status:[/cyan]")
+        console.print(f"[bold]launchctl list | grep {config.launchd.label}[/bold]")
+
+        console.print(f"\n[dim]Note: The agent will run every {config.launchd.interval_seconds} seconds ({config.launchd.interval_seconds // 3600} hours)[/dim]")
+
+    except Exception as e:
+        console.print(f"[red]Error creating launchd configuration: {e}[/red]")
+        raise typer.Exit(code=1)
+
 
 ledger_app = typer.Typer(help="Ledger commands")
 app.add_typer(ledger_app, name="ledger")
@@ -502,21 +862,17 @@ def ledger_tail(
         None,
         "--vault",
         "-v",
-        help="Path to vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
+        help="Path to vault directory (default: auto-discover from current directory)",
     ),
 ):
     """Display the last N events from the ledger.
-    
+
     Shows recent ledger events with timestamps, types, and payloads.
     Skips malformed lines with warnings.
     Use --full to see complete payloads with JSON formatting.
     """
     # Load vault configuration
-    if vault_path:
-        config = TotemConfig(vault_path=Path(vault_path))
-    else:
-        config = TotemConfig.from_env()
-    
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
     paths = VaultPaths.from_config(config)
 
     # Check if vault exists
@@ -580,7 +936,7 @@ def route(
         None,
         "--vault",
         "-v",
-        help="Path to vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
+        help="Path to vault directory (default: auto-discover from current directory)",
     ),
     date: str = typer.Option(
         None,
@@ -681,6 +1037,16 @@ def route(
             console.print(f"[red]Error: LLM engine '{llm_engine}' requested but no API key found[/red]")
             console.print("[yellow]Set OPENAI_API_KEY or ANTHROPIC_API_KEY, or use --llm-engine fake[/yellow]")
             raise typer.Exit(code=1)
+
+    # Load vault configuration
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
+    paths = VaultPaths.from_config(config)
+
+    # Check if vault exists
+    if not paths.system.exists():
+        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
 
     # Determine date string (today if not provided)
     if date:
@@ -826,16 +1192,12 @@ def intent(
         None,
         "--vault",
         "-v",
-        help="Path to vault directory",
+        help="Path to vault directory (default: auto-discover from current directory)",
     ),
 ):
     """Classify and route a single input using IntentArbiter."""
     # Load vault configuration
-    if vault_path:
-        config = TotemConfig(vault_path=Path(vault_path))
-    else:
-        config = TotemConfig.from_env()
-    
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
     paths = VaultPaths.from_config(config)
     ledger_writer = LedgerWriter(paths.ledger_file)
     
@@ -857,7 +1219,7 @@ def distill(
         None,
         "--vault",
         "-v",
-        help="Path to vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
+        help="Path to vault directory (default: auto-discover from current directory)",
     ),
     date: str = typer.Option(
         None,
@@ -891,12 +1253,14 @@ def distill(
     
     Use --dry-run to preview what would be written without applying changes.
     """
-    # Load vault configuration
-    if vault_path:
-        config = TotemConfig(vault_path=Path(vault_path))
+    # Determine date string (today if not provided)
+    if date:
+        date_str = date
     else:
-        config = TotemConfig.from_env()
-    
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Load vault configuration
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
     paths = VaultPaths.from_config(config)
 
     # Check if vault exists
@@ -904,12 +1268,6 @@ def distill(
         console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
         console.print("[yellow]Run 'totem init' first[/yellow]")
         raise typer.Exit(code=1)
-
-    # Determine date string (today if not provided)
-    if date:
-        date_str = date
-    else:
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     # Get LLM client
     try:
@@ -1054,7 +1412,7 @@ def undo(
         None,
         "--vault",
         "-v",
-        help="Path to vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
+        help="Path to vault directory (default: auto-discover from current directory)",
     ),
     write_id: str = typer.Option(
         ...,
@@ -1064,16 +1422,12 @@ def undo(
     ),
 ):
     """Undo a canon write by removing inserted blocks.
-    
+
     Reverses the append-only writes from a distillation operation.
     The write ID can be found in the distillation output or ledger.
     """
     # Load vault configuration
-    if vault_path:
-        config = TotemConfig(vault_path=Path(vault_path))
-    else:
-        config = TotemConfig.from_env()
-    
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
     paths = VaultPaths.from_config(config)
 
     # Check if vault exists
@@ -1125,7 +1479,7 @@ def review(
         None,
         "--vault",
         "-v",
-        help="Path to vault directory (default: TOTEM_VAULT_PATH env or ./totem_vault)",
+        help="Path to vault directory (default: auto-discover from current directory)",
     ),
     date: str = typer.Option(
         None,
@@ -1162,12 +1516,14 @@ def review(
     
     Philosophy: You never file, only judge. No silent writes.
     """
-    # Load vault configuration
-    if vault_path:
-        config = TotemConfig(vault_path=Path(vault_path))
+    # Determine date string (today if not provided)
+    if date:
+        date_str = date
     else:
-        config = TotemConfig.from_env()
-    
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Load vault configuration
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
     paths = VaultPaths.from_config(config)
 
     # Check if vault exists
@@ -1175,12 +1531,6 @@ def review(
         console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
         console.print("[yellow]Run 'totem init' first[/yellow]")
         raise typer.Exit(code=1)
-
-    # Determine date string (today if not provided)
-    if date:
-        date_str = date
-    else:
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     # Determine queue path
     if queue_path:
@@ -1252,6 +1602,12 @@ def version():
 
 def main():
     """Entry point for the CLI."""
+    # Handle --version before Typer processing
+    if len(sys.argv) == 2 and sys.argv[1] in ("--version", "-v"):
+        from . import __version__
+        console.print(f"Totem OS v{__version__}")
+        sys.exit(0)
+
     app()
 
 
