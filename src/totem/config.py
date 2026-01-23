@@ -2,54 +2,135 @@
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
+try:
+    import tomllib  # Python 3.11+
+except ImportError:
+    import tomli as tomllib  # Python < 3.11
 
-def resolve_vault_root(cli_vault_path: Optional[str] = None) -> Path:
+
+def _find_repo_root(start_dir: Path) -> Path:
+    """Find repository root by walking upward looking for .git or pyproject.toml."""
+    current_dir = start_dir
+
+    while True:
+        # Check for common repo indicators
+        if (current_dir / ".git").exists() or (current_dir / "pyproject.toml").exists():
+            return current_dir
+
+        # Move up one directory
+        parent_dir = current_dir.parent
+
+        # Stop if we reach filesystem root
+        if parent_dir == current_dir:
+            # No repo found, return original directory
+            return start_dir
+
+        current_dir = parent_dir
+
+
+def _load_repo_config(repo_root: Path) -> Optional[Path]:
+    """Load vault_root from .totem/config.toml if it exists."""
+    config_file = repo_root / ".totem" / "config.toml"
+
+    if not config_file.exists():
+        return None
+
+    try:
+        with open(config_file, "rb") as f:
+            data = tomllib.load(f)
+
+        vault_root_str = data.get("vault_root")
+        if vault_root_str:
+            vault_path = Path(vault_root_str).resolve()
+            return vault_path
+
+    except Exception:
+        # If config file is malformed, ignore it
+        pass
+
+    return None
+
+
+def _has_vault_markers(vault_path: Path) -> bool:
+    """Check if a directory contains Totem vault markers."""
+    system_dir = vault_path / "90_system"
+    config_file = system_dir / "config.yaml"
+    return config_file.exists()
+
+
+def resolve_vault_root(
+    mode: Literal["use_existing", "create_ok"],
+    cli_vault_path: Optional[str] = None
+) -> Path:
     """Resolve vault root path with the following precedence:
 
     1. CLI --vault option (if provided)
-    2. TOTEM_VAULT environment variable
-    3. Auto-discovery by walking up from cwd looking for vault indicators
+    2. repo-local .totem/config.toml (walk upward from CWD)
+    3. TOTEM_VAULT environment variable
+    4. Auto-discovery by walking up from cwd looking for vault indicators
+    5. Error with helpful message
+
+    Args:
+        mode: "use_existing" requires vault markers to exist, "create_ok" allows new vaults
+        cli_vault_path: Vault path from CLI --vault option
 
     Returns:
         Absolute path to vault root directory
 
     Raises:
-        FileNotFoundError: If vault cannot be found via auto-discovery
+        FileNotFoundError: If vault cannot be found and mode is "use_existing"
     """
     # 1. CLI option takes highest precedence
     if cli_vault_path:
         vault_path = Path(cli_vault_path).resolve()
-        if not vault_path.exists():
+        if mode == "use_existing" and not vault_path.exists():
             raise FileNotFoundError(f"Specified vault path does not exist: {vault_path}")
+        elif mode == "create_ok" and not vault_path.exists():
+            # For create_ok, path doesn't need to exist yet
+            pass
+        elif vault_path.exists() and mode == "use_existing" and not _has_vault_markers(vault_path):
+            raise FileNotFoundError(f"Specified path exists but is not a Totem vault: {vault_path}")
         return vault_path
 
-    # 2. Environment variable
+    # 2. Repo-local config (.totem/config.toml)
+    repo_root = _find_repo_root(Path.cwd())
+    repo_config_vault = _load_repo_config(repo_root)
+    if repo_config_vault:
+        if mode == "use_existing":
+            if not repo_config_vault.exists():
+                raise FileNotFoundError(f"Vault path from .totem/config.toml does not exist: {repo_config_vault}")
+            if not _has_vault_markers(repo_config_vault):
+                raise FileNotFoundError(f"Vault path from .totem/config.toml is not a valid Totem vault: {repo_config_vault}")
+        return repo_config_vault
+
+    # 3. Environment variable
     env_vault = os.environ.get("TOTEM_VAULT")
     if env_vault:
         vault_path = Path(env_vault).resolve()
-        if not vault_path.exists():
+        if mode == "use_existing" and not vault_path.exists():
             raise FileNotFoundError(f"TOTEM_VAULT path does not exist: {vault_path}")
+        elif mode == "create_ok" and not vault_path.exists():
+            # For create_ok, path doesn't need to exist yet
+            pass
+        elif vault_path.exists() and mode == "use_existing" and not _has_vault_markers(vault_path):
+            raise FileNotFoundError(f"TOTEM_VAULT path exists but is not a Totem vault: {vault_path}")
         return vault_path
 
-    # 3. Auto-discovery by walking up from cwd
+    # 4. Auto-discovery by walking up from cwd
     current_dir = Path.cwd()
 
     while True:
         # Check if current directory contains 90_system/config.yaml (is vault root)
-        system_dir = current_dir / "90_system"
-        config_file = system_dir / "config.yaml"
-        if config_file.exists():
+        if _has_vault_markers(current_dir):
             return current_dir
 
         # Check if current directory contains totem_vault/90_system/config.yaml
         totem_vault_dir = current_dir / "totem_vault"
-        totem_system_dir = totem_vault_dir / "90_system"
-        totem_config_file = totem_system_dir / "config.yaml"
-        if totem_config_file.exists():
+        if _has_vault_markers(totem_vault_dir):
             return totem_vault_dir
 
         # Move up one directory
@@ -61,11 +142,23 @@ def resolve_vault_root(cli_vault_path: Optional[str] = None) -> Path:
 
         current_dir = parent_dir
 
-    # If we get here, no vault was found
-    raise FileNotFoundError(
-        f"Vault not found. Searched upward from {Path.cwd()} for vault indicators. "
-        "Run 'totem init' to initialize a vault, or specify --vault path."
-    )
+    # 5. If we get here, no vault was found
+    if mode == "use_existing":
+        raise FileNotFoundError(
+            "Vault not found. Searched for:\n"
+            f"  - Vault markers upward from {Path.cwd()}\n"
+            f"  - .totem/config.toml in repo at {_find_repo_root(Path.cwd())}\n"
+            f"  - TOTEM_VAULT environment variable\n"
+            "Try one of:\n"
+            "  • totem link-vault \"/path/to/vault\" (link existing vault to repo)\n"
+            "  • totem --vault \"/path/to/vault\" <command> (override for single command)\n"
+            "  • export TOTEM_VAULT=\"/path/to/vault\" (set environment variable)\n"
+            "  • cd into vault directory (auto-discovery)"
+        )
+    else:
+        # For create_ok, we shouldn't reach here since we would have fallen back to defaults
+        # But if we do, use a reasonable default
+        return Path.cwd() / "totem_vault"
 
 
 class ChatGptExportConfig(BaseModel):
@@ -107,14 +200,15 @@ class TotemConfig(BaseModel):
     model_config = {"frozen": False}
 
     @classmethod
-    def from_env(cls, cli_vault_path: Optional[str] = None) -> "TotemConfig":
+    def from_env(cls, cli_vault_path: Optional[str] = None, mode: Literal["use_existing", "create_ok"] = "use_existing") -> "TotemConfig":
         """Load configuration from environment variables or defaults.
 
         Args:
             cli_vault_path: Vault path from CLI --vault option (highest precedence)
+            mode: Vault resolution mode - "use_existing" requires markers, "create_ok" allows new vaults
         """
         # Resolve vault path using the new resolver
-        vault_path = resolve_vault_root(cli_vault_path)
+        vault_path = resolve_vault_root(mode, cli_vault_path)
 
         return cls(
             vault_path=vault_path,

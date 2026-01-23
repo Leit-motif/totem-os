@@ -16,6 +16,7 @@ dependencies = [
     "google-api-python-client>=2.0.0",
     "google-auth>=2.0.0",
     "google-auth-oauthlib>=1.0.0",
+    "tomli>=1.2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

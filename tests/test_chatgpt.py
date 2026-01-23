@@ -693,7 +693,7 @@ class TestVaultResolution:
         (vault_dir / "90_system").mkdir()
         (vault_dir / "90_system" / "config.yaml").write_text("vault_path: test")
 
-        resolved = resolve_vault_root(str(vault_dir))
+        resolved = resolve_vault_root("use_existing", str(vault_dir))
         assert resolved == vault_dir
 
     def test_resolve_vault_root_env_override(self, tmp_path, monkeypatch):
@@ -704,7 +704,7 @@ class TestVaultResolution:
         (vault_dir / "90_system" / "config.yaml").write_text("vault_path: test")
 
         monkeypatch.setenv("TOTEM_VAULT", str(vault_dir))
-        resolved = resolve_vault_root(None)
+        resolved = resolve_vault_root("use_existing", None)
         assert resolved == vault_dir
 
     def test_resolve_vault_root_from_repo_root(self, tmp_path, monkeypatch):
@@ -725,7 +725,7 @@ class TestVaultResolution:
         old_cwd = os.getcwd()
         try:
             os.chdir(repo_root)
-            resolved = resolve_vault_root(None)
+            resolved = resolve_vault_root("use_existing", None)
             assert resolved == vault_dir
         finally:
             os.chdir(old_cwd)
@@ -748,7 +748,7 @@ class TestVaultResolution:
         old_cwd = os.getcwd()
         try:
             os.chdir(subdir)
-            resolved = resolve_vault_root(None)
+            resolved = resolve_vault_root("use_existing", None)
             assert resolved == vault_dir
         finally:
             os.chdir(old_cwd)
@@ -761,20 +761,20 @@ class TestVaultResolution:
         try:
             os.chdir(tmp_path)
             with pytest.raises(FileNotFoundError, match="Vault not found"):
-                resolve_vault_root(None)
+                resolve_vault_root("use_existing", None)
         finally:
             os.chdir(old_cwd)
 
     def test_resolve_vault_root_cli_path_does_not_exist(self, tmp_path):
         """Test that FileNotFoundError is raised for non-existent CLI path."""
         with pytest.raises(FileNotFoundError, match="does not exist"):
-            resolve_vault_root(str(tmp_path / "nonexistent"))
+            resolve_vault_root("use_existing", str(tmp_path / "nonexistent"))
 
     def test_resolve_vault_root_env_path_does_not_exist(self, tmp_path, monkeypatch):
         """Test that FileNotFoundError is raised for non-existent env path."""
         monkeypatch.setenv("TOTEM_VAULT", str(tmp_path / "nonexistent"))
         with pytest.raises(FileNotFoundError, match="does not exist"):
-            resolve_vault_root(None)
+            resolve_vault_root("use_existing", None)
 
     def test_totem_config_from_env_with_cli_override(self, tmp_path):
         """Test TotemConfig.from_env with CLI vault path override."""
@@ -783,7 +783,7 @@ class TestVaultResolution:
         (vault_dir / "90_system").mkdir()
         (vault_dir / "90_system" / "config.yaml").write_text("vault_path: test")
 
-        config = TotemConfig.from_env(cli_vault_path=str(vault_dir))
+        config = TotemConfig.from_env(cli_vault_path=str(vault_dir), mode="use_existing")
         assert config.vault_path == vault_dir
 
     def test_totem_config_from_env_auto_discovery(self, tmp_path, monkeypatch):
@@ -799,10 +799,204 @@ class TestVaultResolution:
         old_cwd = os.getcwd()
         try:
             os.chdir(vault_dir)
-            config = TotemConfig.from_env(cli_vault_path=None)
+            config = TotemConfig.from_env(cli_vault_path=None, mode="use_existing")
             assert config.vault_path == vault_dir
         finally:
             os.chdir(old_cwd)
+
+    def test_resolve_vault_root_repo_config(self, tmp_path, monkeypatch):
+        """Test repo-local .totem/config.toml resolution."""
+        monkeypatch.delenv("TOTEM_VAULT", raising=False)
+
+        # Create repo structure
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+
+        # Create vault
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        (vault_dir / "90_system").mkdir()
+        (vault_dir / "90_system" / "config.yaml").write_text("vault_path: test")
+
+        # Create .totem/config.toml
+        totem_dir = repo_root / ".totem"
+        totem_dir.mkdir()
+        config_file = totem_dir / "config.toml"
+        config_file.write_text(f'vault_root = "{vault_dir}"\n')
+
+        # Change to repo root
+        import os
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(repo_root)
+            resolved = resolve_vault_root("use_existing", None)
+            assert resolved == vault_dir
+        finally:
+            os.chdir(old_cwd)
+
+    def test_resolve_vault_root_create_ok_mode(self, tmp_path):
+        """Test create_ok mode allows non-existent paths."""
+        nonexistent_path = tmp_path / "new_vault"
+        resolved = resolve_vault_root("create_ok", str(nonexistent_path))
+        assert resolved == nonexistent_path
+
+    def test_resolve_vault_root_create_ok_with_existing(self, tmp_path):
+        """Test create_ok mode works with existing vault."""
+        vault_dir = tmp_path / "existing_vault"
+        vault_dir.mkdir()
+        (vault_dir / "90_system").mkdir()
+        (vault_dir / "90_system" / "config.yaml").write_text("vault_path: test")
+
+        resolved = resolve_vault_root("create_ok", str(vault_dir))
+        assert resolved == vault_dir
+
+    def test_resolve_vault_root_priority_order(self, tmp_path, monkeypatch):
+        """Test resolution priority: CLI > repo-config > env > auto-discovery."""
+        monkeypatch.delenv("TOTEM_VAULT", raising=False)
+
+        # Create multiple vault options
+        cli_vault = tmp_path / "cli_vault"
+        cli_vault.mkdir()
+        (cli_vault / "90_system").mkdir()
+        (cli_vault / "90_system" / "config.yaml").write_text("vault_path: test")
+
+        env_vault = tmp_path / "env_vault"
+        env_vault.mkdir()
+        (env_vault / "90_system").mkdir()
+        (env_vault / "90_system" / "config.yaml").write_text("vault_path: test")
+
+        auto_vault = tmp_path / "auto_vault"
+        auto_vault.mkdir()
+        (auto_vault / "90_system").mkdir()
+        (auto_vault / "90_system" / "config.yaml").write_text("vault_path: test")
+
+        # Create repo with config pointing to env_vault
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        totem_dir = repo_root / ".totem"
+        totem_dir.mkdir()
+        config_file = totem_dir / "config.toml"
+        config_file.write_text(f'vault_root = "{env_vault}"\n')
+
+        # Set env var to env_vault
+        monkeypatch.setenv("TOTEM_VAULT", str(env_vault))
+
+        # Change to auto_vault directory
+        import os
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(auto_vault)
+            # CLI should override everything
+            resolved = resolve_vault_root("use_existing", str(cli_vault))
+            assert resolved == cli_vault
+
+            # Without CLI, repo config should be used
+            os.chdir(repo_root)
+            resolved = resolve_vault_root("use_existing", None)
+            assert resolved == env_vault
+
+            # Without repo config, env should be used
+            config_file.unlink()
+            resolved = resolve_vault_root("use_existing", None)
+            assert resolved == env_vault
+
+            # Without env, auto-discovery should work
+            monkeypatch.delenv("TOTEM_VAULT", raising=False)
+            os.chdir(auto_vault)
+            resolved = resolve_vault_root("use_existing", None)
+            assert resolved == auto_vault
+
+        finally:
+            os.chdir(old_cwd)
+
+    def test_resolve_vault_root_helpful_error_message(self, tmp_path, monkeypatch):
+        """Test that helpful error message is shown when no vault is found."""
+        monkeypatch.delenv("TOTEM_VAULT", raising=False)
+
+        import os
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            with pytest.raises(FileNotFoundError) as exc_info:
+                resolve_vault_root("use_existing", None)
+
+            error_msg = str(exc_info.value)
+            assert "Vault not found" in error_msg
+            assert "totem link-vault" in error_msg
+            assert "totem --vault" in error_msg
+            assert "TOTEM_VAULT" in error_msg
+            assert "Searched for:" in error_msg
+        finally:
+            os.chdir(old_cwd)
+
+    def test_totem_config_from_env_create_ok_mode(self, tmp_path):
+        """Test TotemConfig.from_env with create_ok mode."""
+        new_vault_path = tmp_path / "new_vault"
+        config = TotemConfig.from_env(cli_vault_path=str(new_vault_path), mode="create_ok")
+        assert config.vault_path == new_vault_path
+
+
+class TestLinkVaultCommand:
+    """Test the link-vault command functionality."""
+
+    def test_link_vault_creates_config(self, tmp_path, monkeypatch):
+        """Test that link-vault creates .totem/config.toml correctly."""
+        # Create vault
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        (vault_dir / "90_system").mkdir()
+        (vault_dir / "90_system" / "config.yaml").write_text("vault_path: test")
+
+        # Create repo structure
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+
+        # Change to repo root
+        import os
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(repo_root)
+
+            # Mock the console to capture output
+            from unittest.mock import patch
+            from rich.console import Console
+            console = Console()
+
+            with patch('totem.cli.console', console):
+                from totem.cli import link_vault
+                link_vault(str(vault_dir))
+
+            # Check that config file was created
+            config_file = repo_root / ".totem" / "config.toml"
+            assert config_file.exists()
+
+            # Check content
+            content = config_file.read_text()
+            assert f'vault_root = "{vault_dir}"' in content
+            assert "Totem OS repository configuration" in content
+
+        finally:
+            os.chdir(old_cwd)
+
+    def test_link_vault_validates_vault_exists(self, tmp_path):
+        """Test that link-vault validates vault exists and has markers."""
+        nonexistent_vault = tmp_path / "nonexistent"
+
+        from click.exceptions import Exit
+        with pytest.raises(Exit):
+            from totem.cli import link_vault
+            link_vault(str(nonexistent_vault))
+
+    def test_link_vault_validates_vault_has_markers(self, tmp_path):
+        """Test that link-vault validates vault has proper markers."""
+        # Create directory without vault markers
+        invalid_vault = tmp_path / "invalid_vault"
+        invalid_vault.mkdir()
+
+        from click.exceptions import Exit
+        with pytest.raises(Exit):
+            from totem.cli import link_vault
+            link_vault(str(invalid_vault))
 
 
 class TestConversationJsonFinder:
