@@ -408,7 +408,8 @@ def ingest_latest_export(
                     conv,
                     obsidian_chatgpt_dir,
                     message_id,
-                    config.chatgpt_export.timezone
+                    config.chatgpt_export.timezone,
+                    run_date_str,
                 )
                 written_notes.append(note_path)
             else:
@@ -428,16 +429,18 @@ def ingest_latest_export(
         # Update daily notes
         obsidian_daily_dir = vault_paths.root / config.chatgpt_export.obsidian_daily_dir
 
-        if not dry_run:
-            daily_result = write_daily_note_chatgpt_block(
-                parsed_result.conversations,
-                run_date_str,  # Use processing date
-                obsidian_daily_dir,
-                ledger_writer
-            )
-            logger.info(f"Updated daily note: {daily_result.daily_note_path}")
-        else:
-            logger.info("[DRY RUN] Would update daily notes")
+        enable_daily_notes = False  # Guarded for now; re-enable when ready.
+        if enable_daily_notes:
+            if not dry_run:
+                daily_result = write_daily_note_chatgpt_block(
+                    parsed_result.conversations,
+                    run_date_str,  # Use processing date
+                    obsidian_daily_dir,
+                    ledger_writer,
+                )
+                logger.info(f"Updated daily note: {daily_result.daily_note_path}")
+            else:
+                logger.info("[DRY RUN] Would update daily notes")
 
         # Mark message as processed
         state.mark_message_processed(message_id)

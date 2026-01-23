@@ -135,15 +135,19 @@ def ingest_from_zip(
                 obsidian_chatgpt_dir,
                 gmail_msg_id="local_zip",
                 timezone=config.chatgpt_export.timezone,
+                run_date_str=run_date_str,
             )
             written_notes.append(note_path)
 
-        daily_result = write_daily_note_chatgpt_block(
-            parsed_result.conversations,
-            run_date_str,
-            obsidian_daily_dir,
-            ledger_writer,
-        )
+        enable_daily_notes = False  # Guarded for now; re-enable when ready.
+        daily_result = None
+        if enable_daily_notes:
+            daily_result = write_daily_note_chatgpt_block(
+                parsed_result.conversations,
+                run_date_str,
+                obsidian_daily_dir,
+                ledger_writer,
+            )
 
         ledger_writer.append_event(
             event_type="CHATGPT_EXPORT_LOCAL_ZIP_INGESTED",
@@ -153,7 +157,7 @@ def ingest_from_zip(
                 "conversations_parsed": parsed_result.parsed_count,
                 "conversations_total": parsed_result.total_count,
                 "notes_written": len(written_notes),
-                "daily_note_path": str(daily_result.daily_note_path),
+                "daily_note_path": str(daily_result.daily_note_path) if daily_result else None,
             },
         )
 

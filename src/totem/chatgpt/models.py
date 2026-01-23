@@ -6,12 +6,17 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
-class ChatGptMessage(BaseModel):
+class ChatMessage(BaseModel):
     """A single message in a ChatGPT conversation."""
 
-    role: str  # "user", "assistant", "system"
+    role: str  # "user", "assistant"
     content: str
-    timestamp: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+class ChatGptMessage(ChatMessage):
+    """Backward-compatible alias for ChatGPT messages."""
+    pass
 
 
 class ChatGptConversation(BaseModel):
@@ -19,9 +24,9 @@ class ChatGptConversation(BaseModel):
 
     conversation_id: str
     title: str = "Untitled Conversation"
-    created_at: datetime
-    updated_at: datetime
-    messages: list[ChatGptMessage] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    messages: list[ChatMessage] = Field(default_factory=list)
 
 
 class ParsedConversations(BaseModel):

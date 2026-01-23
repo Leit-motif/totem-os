@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .models import ChatGptConversation, ChatGptMessage, ParsedConversations
+from .models import ChatGptConversation, ChatMessage, ParsedConversations
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +125,7 @@ def _parse_single_conversation(conv_data: Dict[str, Any]) -> Optional[ChatGptCon
     if not created_at:
         # Fallback to current time if no timestamp
         created_at = datetime.now()
+    if not updated_at:
         updated_at = created_at
 
     # Extract messages
@@ -188,7 +189,7 @@ def _extract_updated_at(conv_data: Dict[str, Any]) -> Optional[datetime]:
     # Fallback to earliest message timestamp
     messages = _extract_messages(conv_data)
     if messages:
-        message_times = [msg.timestamp for msg in messages if msg.timestamp]
+        message_times = [msg.created_at for msg in messages if msg.created_at]
         if message_times:
             return min(message_times)
 
@@ -226,17 +227,46 @@ def _parse_timestamp(data: Dict[str, Any], keys: List[str]) -> Optional[datetime
     return None
 
 
-def _extract_messages(conv_data: Dict[str, Any]) -> List[ChatGptMessage]:
+def _extract_messages(conv_data: Dict[str, Any]) -> List[ChatMessage]:
     """Extract messages from conversation data."""
-    messages = []
+    messages: List[ChatMessage] = []
 
-    # Try different message keys
-    for msg_key in ['messages', 'message', 'turns', 'history']:
+    # Mapping-based export format
+    mapping = conv_data.get("mapping")
+    if isinstance(mapping, dict):
+        messages = _extract_messages_from_mapping(mapping)
+        if messages:
+            return _sort_messages(messages)
+
+    # Message-list export format
+    for msg_key in ["messages", "message", "turns", "history"]:
         if msg_key in conv_data and isinstance(conv_data[msg_key], list):
-            raw_messages = conv_data[msg_key]
-            break
-    else:
-        return messages
+            messages = _extract_messages_from_list(conv_data[msg_key])
+            return _sort_messages(messages)
+
+    return messages
+
+
+def _extract_messages_from_mapping(mapping: Dict[str, Any]) -> List[ChatMessage]:
+    """Extract messages from mapping-based export format."""
+    messages: List[ChatMessage] = []
+
+    for node in mapping.values():
+        if not isinstance(node, dict):
+            continue
+        msg_data = node.get("message")
+        if not isinstance(msg_data, dict):
+            continue
+        message = _parse_single_message(msg_data)
+        if message:
+            messages.append(message)
+
+    return messages
+
+
+def _extract_messages_from_list(raw_messages: List[Any]) -> List[ChatMessage]:
+    """Extract messages from list-based export format."""
+    messages: List[ChatMessage] = []
 
     for msg_data in raw_messages:
         if not isinstance(msg_data, dict):
@@ -253,25 +283,47 @@ def _extract_messages(conv_data: Dict[str, Any]) -> List[ChatGptMessage]:
     return messages
 
 
-def _parse_single_message(msg_data: Dict[str, Any]) -> Optional[ChatGptMessage]:
+def _sort_messages(messages: List[ChatMessage]) -> List[ChatMessage]:
+    """Sort messages by timestamp when available."""
+    if not messages:
+        return messages
+
+    if not any(msg.created_at for msg in messages):
+        return messages
+
+    def sort_key(msg: ChatMessage) -> tuple:
+        if msg.created_at:
+            try:
+                return (0, msg.created_at.timestamp())
+            except (ValueError, OSError):
+                return (0, 0.0)
+        return (1, 0.0)
+
+    return sorted(messages, key=sort_key)
+
+
+def _parse_single_message(msg_data: Dict[str, Any]) -> Optional[ChatMessage]:
     """Parse a single message."""
     # Extract role
     role = _extract_message_role(msg_data)
-    if not role:
+    if not role or role not in ["user", "assistant"]:
         return None
 
     # Extract content
     content = _extract_message_content(msg_data)
-    if not content:
+    if not content or not content.strip():
         return None
 
     # Extract timestamp
-    timestamp = _parse_timestamp(msg_data, ['timestamp', 'time', 'created_at'])
+    timestamp = _parse_timestamp(
+        msg_data,
+        ['create_time', 'update_time', 'timestamp', 'time', 'created_at']
+    )
 
-    return ChatGptMessage(
+    return ChatMessage(
         role=role,
-        content=content,
-        timestamp=timestamp
+        content=content.strip(),
+        created_at=timestamp,
     )
 
 
@@ -279,13 +331,16 @@ def _extract_message_role(msg_data: Dict[str, Any]) -> Optional[str]:
     """Extract message role (user/assistant/system)."""
     for key in ['role', 'author', 'sender', 'type']:
         if key in msg_data and msg_data[key]:
-            role = str(msg_data[key]).lower().strip()
+            value = msg_data[key]
+            if key == "author" and isinstance(value, dict):
+                value = value.get("role", "")
+            role = str(value).lower().strip()
             # Normalize role names
             if role in ['user', 'human']:
                 return 'user'
-            elif role in ['assistant', 'ai', 'bot', 'gpt']:
+            if role in ['assistant', 'ai', 'bot', 'gpt']:
                 return 'assistant'
-            elif role in ['system', 'meta']:
+            if role in ['system', 'meta', 'tool', 'function']:
                 return 'system'
 
     # Infer from content structure
@@ -305,6 +360,19 @@ def _extract_message_content(msg_data: Dict[str, Any]) -> Optional[str]:
 
             # Handle nested content structures
             if isinstance(content, dict):
+                # ChatGPT export format: content.parts
+                if "parts" in content and isinstance(content["parts"], list):
+                    parts = [
+                        str(part)
+                        for part in content["parts"]
+                        if isinstance(part, str) and part.strip()
+                    ]
+                    if parts:
+                        return "\n".join(parts)
+
+                if "text" in content and content["text"]:
+                    return str(content["text"])
+
                 # Try common nested keys
                 for nested_key in ['text', 'value', 'content']:
                     if nested_key in content and content[nested_key]:

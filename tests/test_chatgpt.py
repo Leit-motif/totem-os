@@ -431,6 +431,56 @@ class TestConversationParser:
         finally:
             json_path.unlink()
 
+    def test_parse_conversations_json_mapping_parts(self):
+        """Test parsing mapping-based export with content parts."""
+        mock_data = [
+            {
+                "id": "conv_map",
+                "title": "Mapping Conversation",
+                "create_time": 1640995200.0,
+                "mapping": {
+                    "node_1": {
+                        "message": {
+                            "author": {"role": "user"},
+                            "content": {"parts": ["Hello", "there"]},
+                            "create_time": 1640995200.0,
+                        }
+                    },
+                    "node_2": {
+                        "message": {
+                            "author": {"role": "assistant"},
+                            "content": {"parts": ["Hi!"]},
+                            "create_time": 1640995260.0,
+                        }
+                    },
+                    "node_3": {
+                        "message": {
+                            "author": {"role": "system"},
+                            "content": {"parts": ["system note"]},
+                            "create_time": 1640995270.0,
+                        }
+                    },
+                },
+            }
+        ]
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(mock_data, f)
+            json_path = Path(f.name)
+
+        try:
+            result = conversation_parser.parse_conversations_json(json_path)
+
+            assert result.total_count == 1
+            assert result.parsed_count == 1
+            conv = result.conversations[0]
+            assert conv.conversation_id == "conv_map"
+            assert len(conv.messages) == 2
+            assert conv.messages[0].content == "Hello\nthere"
+            assert conv.messages[1].content == "Hi!"
+        finally:
+            json_path.unlink()
+
     def test_parse_single_conversation_minimal(self):
         """Test parsing minimal conversation data."""
         conv_data = {
@@ -484,12 +534,12 @@ class TestObsidianWriter:
                 models.ChatGptMessage(
                     role="user",
                     content="Hello world",
-                    timestamp=datetime(2022, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+                    created_at=datetime(2022, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
                 ),
                 models.ChatGptMessage(
                     role="assistant",
                     content="Hi there!",
-                    timestamp=datetime(2022, 1, 1, 12, 1, 0, tzinfo=timezone.utc)
+                    created_at=datetime(2022, 1, 1, 12, 1, 0, tzinfo=timezone.utc)
                 ),
             ]
         )
@@ -501,10 +551,36 @@ class TestObsidianWriter:
         assert "conversation_id: test_123" in markdown
         assert "ingested_from: gmail:gmail_123" in markdown
         assert "# Test Conversation" in markdown
-        assert "## User (12:00)" in markdown
-        assert "## Assistant (12:01)" in markdown
+        assert "## Transcript" in markdown
+        assert "### User" in markdown
+        assert "### Assistant" in markdown
         assert "Hello world" in markdown
         assert "Hi there!" in markdown
+
+    def test_write_conversation_note_path_structure(self):
+        """Test note paths use YYYY/MM/DD structure."""
+        conv = models.ChatGptConversation(
+            conversation_id="conv_123",
+            title="Path Test",
+            created_at=datetime(2022, 1, 2, 12, 0, 0, tzinfo=timezone.utc),
+            updated_at=datetime(2022, 1, 2, 12, 5, 0, tzinfo=timezone.utc),
+            messages=[],
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            obsidian_dir = Path(temp_dir) / "chatgpt"
+            obsidian_dir.mkdir()
+
+            note_path = obsidian_writer.write_conversation_note(
+                conv,
+                obsidian_dir,
+                "gmail_123",
+                run_date_str="2022-01-03",
+            )
+
+            expected_path = obsidian_dir / "2022" / "01" / "02" / "Path Test.md"
+            assert note_path == expected_path
+            assert note_path.exists()
 
 
 class TestDailyNote:
@@ -530,7 +606,9 @@ class TestDailyNote:
                 conversations,
                 "2022-01-01",
                 daily_dir,
-                Mock()  # ledger_writer
+                Mock(),  # ledger_writer
+                {"conv_1": daily_dir.parent / "chatgpt" / "2022" / "01" / "01" / "Morning Chat.md"},
+                daily_dir.parent,
             )
 
             daily_file = daily_dir / "2022-01-01.md"
@@ -540,6 +618,7 @@ class TestDailyNote:
             assert "<!-- TOTEM:CHATGPT:START -->" in content
             assert "<!-- TOTEM:CHATGPT:END -->" in content
             assert "Morning Chat" in content
+            assert "[[chatgpt/2022/01/01/Morning Chat|Morning Chat]]" in content
 
     def test_write_daily_note_chatgpt_block_existing(self):
         """Test updating existing daily note block."""
@@ -573,7 +652,9 @@ Some existing content.
                 conversations,
                 "2022-01-01",
                 daily_dir,
-                Mock()  # ledger_writer
+                Mock(),  # ledger_writer
+                {"new_conv": daily_dir.parent / "chatgpt" / "2022" / "01" / "01" / "New Conversation.md"},
+                daily_dir.parent,
             )
 
             content = daily_file.read_text()
@@ -581,6 +662,7 @@ Some existing content.
             assert "New Conversation" in content
             assert "Old Conversation" not in content  # Replaced
             assert content.count("<!-- TOTEM:CHATGPT:START -->") == 1  # No duplicates
+            assert "[[chatgpt/2022/01/01/New Conversation|New Conversation]]" in content
 
 
 class TestState:
@@ -1108,7 +1190,7 @@ class TestLocalZipIngest:
         assert result is True
 
         chatgpt_root = Path(config.chatgpt_export.obsidian_chatgpt_dir)
-        note_paths = list(chatgpt_root.rglob("chatgpt__conv_1.md"))
+        note_paths = list(chatgpt_root.rglob("Test Conversation.md"))
         assert note_paths
 
     def test_ingest_from_downloads_picks_newest_valid_zip(self, tmp_path):
@@ -1145,7 +1227,7 @@ class TestLocalZipIngest:
         assert result is True
 
         chatgpt_root = Path(config.chatgpt_export.obsidian_chatgpt_dir)
-        note_paths = list(chatgpt_root.rglob("chatgpt__conv_1.md"))
+        note_paths = list(chatgpt_root.rglob("A.md"))
         assert note_paths
 
 

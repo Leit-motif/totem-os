@@ -24,8 +24,8 @@ def compute_content_hash(conversation: ChatGptConversation) -> str:
     content_parts = [
         conversation.conversation_id,
         conversation.title,
-        str(conversation.created_at.timestamp()),
-        str(conversation.updated_at.timestamp())
+        conversation.created_at.isoformat() if conversation.created_at else "",
+        conversation.updated_at.isoformat() if conversation.updated_at else "",
     ]
 
     # Add all message content in order
@@ -33,7 +33,7 @@ def compute_content_hash(conversation: ChatGptConversation) -> str:
         content_parts.extend([
             msg.role,
             msg.content,
-            str(msg.timestamp.timestamp()) if msg.timestamp else ""
+            msg.created_at.isoformat() if msg.created_at else "",
         ])
 
     content_str = "|".join(content_parts)
@@ -61,8 +61,8 @@ def format_conversation_markdown(conversation: ChatGptConversation, gmail_msg_id
         f"source: chatgpt_export",
         f"conversation_id: {conversation.conversation_id}",
         f"title: \"{escaped_title}\"",
-        f"created_at: {conversation.created_at.isoformat()}",
-        f"updated_at: {conversation.updated_at.isoformat()}",
+        f"created_at: {conversation.created_at.isoformat() if conversation.created_at else ''}",
+        f"updated_at: {conversation.updated_at.isoformat() if conversation.updated_at else ''}",
         f"ingested_from: gmail:{gmail_msg_id}",
         f"content_hash: {content_hash}",
         "---",
@@ -75,27 +75,26 @@ def format_conversation_markdown(conversation: ChatGptConversation, gmail_msg_id
         "",
     ]
 
-    # Messages
-    for msg in conversation.messages:
-        # Format timestamp if available
-        timestamp_str = ""
-        if msg.timestamp:
-            timestamp_str = f" ({msg.timestamp.strftime('%H:%M')})"
+    body_lines.extend(["## Transcript", ""])
 
-        # Role header
-        role_display = msg.role.title()
-        body_lines.extend([
-            f"## {role_display}{timestamp_str}",
-            "",
-        ])
+    if not conversation.messages:
+        body_lines.append(
+            "No message content was found in this export for this conversation."
+        )
+        body_lines.append("")
+    else:
+        for msg in conversation.messages:
+            role_display = msg.role.title()
+            body_lines.extend([f"### {role_display}", ""])
 
-        # Content
-        if msg.content.strip():
-            # Simple markdown formatting - preserve line breaks
-            content = msg.content.replace('\n', '\n\n')
-            body_lines.extend([content, ""])
-        else:
-            body_lines.extend(["*(empty message)*", ""])
+            if msg.created_at:
+                body_lines.extend([f"*{msg.created_at.isoformat()}*", ""])
+
+            content = msg.content.strip()
+            if content:
+                body_lines.extend([content, ""])
+            else:
+                body_lines.extend(["*(empty message)*", ""])
 
     return "\n".join(frontmatter_lines + body_lines)
 
@@ -104,7 +103,8 @@ def write_conversation_note(
     conversation: ChatGptConversation,
     obsidian_dir: Path,
     gmail_msg_id: str,
-    timezone: str = "America/Chicago"
+    timezone: str = "America/Chicago",
+    run_date_str: str = ""
 ) -> Path:
     """Write conversation as Obsidian note.
 
@@ -113,25 +113,32 @@ def write_conversation_note(
         obsidian_dir: Base Obsidian ChatGPT directory
         gmail_msg_id: Gmail message ID for tracking
         timezone: Timezone for date-based organization
+        run_date_str: Fallback date string (YYYY-MM-DD)
 
     Returns:
         Path to the written file
     """
     # Determine local date for organization
-    local_date = conversation.created_at.astimezone()
-    date_str = local_date.strftime("%Y-%m-%d")
+    if conversation.created_at:
+        local_date = conversation.created_at.astimezone()
+        date_str = local_date.strftime("%Y-%m-%d")
+    else:
+        date_str = run_date_str or datetime.now().strftime("%Y-%m-%d")
+
+    year, month, day = date_str.split("-")
 
     # Create directory structure
-    note_dir = obsidian_dir / date_str
+    note_dir = obsidian_dir / year / month / day
     note_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create filename
-    safe_title = "".join(c for c in conversation.title if c.isalnum() or c in " -_").strip()
+    # Create filename from title with de-dupe
+    safe_title = "".join(
+        c for c in conversation.title if c.isalnum() or c in " -_"
+    ).strip()
     if not safe_title:
-        safe_title = "Untitled"
+        safe_title = "Placeholder Title"
 
-    filename = f"chatgpt__{conversation.conversation_id}.md"
-    note_path = note_dir / filename
+    note_path = _resolve_note_path(note_dir, safe_title, conversation.conversation_id)
 
     # Check if file exists and has same content hash
     content_hash = compute_content_hash(conversation)
@@ -165,3 +172,39 @@ def write_conversation_note(
     logger.info(f"Wrote conversation note: {note_path}")
 
     return note_path
+
+
+def _resolve_note_path(note_dir: Path, base_title: str, conversation_id: str) -> Path:
+    """Find a stable filename for a conversation, de-duping by title."""
+    suffix = 0
+
+    while True:
+        title = base_title if suffix == 0 else f"{base_title}-{suffix + 1}"
+        candidate = note_dir / f"{title}.md"
+
+        if not candidate.exists():
+            return candidate
+
+        existing_id = _read_conversation_id(candidate)
+        if existing_id == conversation_id:
+            return candidate
+
+        suffix += 1
+
+
+def _read_conversation_id(note_path: Path) -> Optional[str]:
+    """Read conversation_id from frontmatter if present."""
+    try:
+        existing_content = note_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    in_frontmatter = False
+    for line in existing_content.split("\n"):
+        if line.strip() == "---":
+            in_frontmatter = not in_frontmatter
+            continue
+        if in_frontmatter and line.startswith("conversation_id:"):
+            return line.split(":", 1)[1].strip()
+
+    return None
