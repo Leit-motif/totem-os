@@ -323,7 +323,7 @@ def _call_gemini_metadata(
 def _post_json(url: str, headers: dict, payload: dict, timeout_seconds: int) -> dict:
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    context = ssl.create_default_context()
+    context = _build_ssl_context()
     try:
         with urllib.request.urlopen(req, context=context, timeout=timeout_seconds) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -332,6 +332,18 @@ def _post_json(url: str, headers: dict, payload: dict, timeout_seconds: int) -> 
         raise ValueError(f"HTTP {exc.code}: {body}") from exc
     except urllib.error.URLError as exc:
         raise ValueError(f"Connection error: {exc}") from exc
+
+
+def _build_ssl_context() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    try:
+        import certifi
+        cafile = certifi.where()
+        if cafile:
+            context.load_verify_locations(cafile)
+    except Exception:
+        pass
+    return context
 
 
 def _extract_gemini_text(response: dict) -> str:
