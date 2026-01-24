@@ -15,6 +15,7 @@ from .downloader import download_zip, find_conversation_json, unzip_archive
 from .email_parser import extract_download_url_from_email, extract_download_urls, save_debug_email_artifact
 from .gmail_client import GmailClient
 from .local_ingest import is_estuary_download_url
+from .metadata import ensure_conversation_metadata
 from .models import ParsedConversations
 from .obsidian_writer import write_conversation_note
 from .state import IngestState
@@ -415,6 +416,11 @@ def ingest_latest_export(
                 )
                 written_notes.append(note_path)
                 conversation_note_paths[conv.conversation_id] = note_path
+                ensure_conversation_metadata(
+                    note_path=note_path,
+                    summary_config=config.chatgpt_export.summary,
+                    ledger_writer=ledger_writer,
+                )
             else:
                 logger.info(f"[DRY RUN] Would write conversation note for {conv.conversation_id}")
 
@@ -441,6 +447,7 @@ def ingest_latest_export(
                     obsidian_vault,
                     ledger_writer,
                     conversation_note_paths,
+                    config.chatgpt_export.summary.include_open_question_in_daily,
                 )
                 logger.info(f"Updated daily note: {daily_result.daily_note_path}")
             else:

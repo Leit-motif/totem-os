@@ -7,6 +7,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 from rich.table import Table
 
 from .capture import ingest_file_capture, ingest_text_capture
@@ -700,6 +701,71 @@ def chatgpt_ingest_from_downloads(
 
     except Exception as e:
         console.print(f"[red]Error during ingestion: {e}[/red]")
+        raise typer.Exit(code=1)
+
+
+@chatgpt_app.command("backfill-metadata")
+def chatgpt_backfill_metadata(
+    limit: int = typer.Option(
+        None,
+        "--limit",
+        help="Maximum number of conversation notes to process (default: config backfill_limit)",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview mode: show what would be done without writing files",
+    ),
+):
+    """Backfill ChatGPT conversation metadata in Obsidian notes."""
+    vault_path = get_global_vault_path()
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
+    paths = VaultPaths.from_config(config)
+
+    if not paths.system.exists():
+        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
+
+    ledger_writer = LedgerWriter(paths.ledger_file)
+
+    obsidian_chatgpt_dir = paths.root / config.chatgpt_export.obsidian_chatgpt_dir
+
+    try:
+        from .chatgpt.metadata import backfill_conversation_metadata
+
+        console.print("[cyan]Backfilling ChatGPT metadata...[/cyan]")
+        with Progress(
+            TextColumn("{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task_id = progress.add_task("Backfill", total=1)
+
+            def _on_progress(processed: int, total: int, _status: str) -> None:
+                if progress.tasks[0].total != total:
+                    progress.update(task_id, total=total)
+                progress.update(task_id, completed=processed)
+
+            results = backfill_conversation_metadata(
+                obsidian_chatgpt_dir=obsidian_chatgpt_dir,
+                summary_config=config.chatgpt_export.summary,
+                ledger_writer=ledger_writer,
+                limit=limit,
+                dry_run=dry_run,
+                progress_callback=_on_progress,
+            )
+
+        console.print(
+            f"[green]Done[/green] processed={results['processed']} generated={results['generated']} "
+            f"skipped={results['skipped']} failed={results['failed']}"
+        )
+
+    except Exception as e:
+        console.print(f"[red]Error during metadata backfill: {e}[/red]")
         raise typer.Exit(code=1)
 
 

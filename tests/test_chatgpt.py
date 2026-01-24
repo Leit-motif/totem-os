@@ -13,6 +13,7 @@ from totem.chatgpt import (
     conversation_parser,
     daily_note,
     email_parser,
+    metadata,
     models,
     obsidian_writer,
     state,
@@ -28,7 +29,7 @@ from totem.config import resolve_vault_root
 from totem.ledger import LedgerWriter
 from totem.paths import VaultPaths
 from totem.models.ledger import LedgerEvent
-from totem.config import ChatGptExportConfig, LaunchdConfig, TotemConfig
+from totem.config import ChatGptExportConfig, ChatGptSummaryConfig, LaunchdConfig, TotemConfig
 
 
 class TestEmailParser:
@@ -728,6 +729,10 @@ class TestLedgerEvent:
             "CHATGPT_EXPORT_PARSED",
             "CHATGPT_CONVERSATIONS_WRITTEN",
             "CHATGPT_DAILY_NOTE_WRITTEN",
+            "CHATGPT_METADATA_GENERATED",
+            "CHATGPT_METADATA_SKIPPED",
+            "CHATGPT_METADATA_FAILED",
+            "CHATGPT_METADATA_BACKFILL_PROGRESS",
             "CHATGPT_EXPORT_INGEST_COMPLETED",
             "CHATGPT_EXPORT_INGEST_FAILED",
         ]
@@ -769,6 +774,9 @@ class TestConfig:
         assert config.chatgpt_export.gmail_query
         assert config.launchd.label
         assert config.launchd.interval_seconds == 21600
+        assert hasattr(config.chatgpt_export, 'summary')
+        assert config.chatgpt_export.summary.enabled is True
+        assert config.chatgpt_export.summary.provider in ["auto", "gemini", "openai"]
 
 
 class TestVaultResolution:
@@ -1065,6 +1073,165 @@ class TestLinkVaultCommand:
 
         finally:
             os.chdir(old_cwd)
+
+
+class TestChatGptMetadata:
+    def test_build_salience_input_full_and_partial(self):
+        short_text = "Hello world." * 5
+        input_text, used_chars, confidence = metadata.build_salience_input(short_text, 500)
+        assert confidence == "full"
+        assert used_chars == len(short_text)
+
+        long_text = ("I realized this matters?\n" * 200).strip()
+        input_text, used_chars, confidence = metadata.build_salience_input(long_text, 500)
+        assert confidence == "partial"
+        assert used_chars <= 500
+        assert len(input_text) == used_chars
+
+    def test_metadata_skip_when_version_matches(self, tmp_path):
+        note_path = tmp_path / "note.md"
+        note_path.write_text(
+            """---
+source: chatgpt_export
+totem_meta_version: 1
+totem_signpost: "Test signpost."
+totem_summary: "Test summary."
+---
+# Title
+""",
+            encoding="utf-8",
+        )
+
+        summary_config = ChatGptSummaryConfig(version=1)
+        ledger_writer = Mock()
+
+        with patch("totem.chatgpt.metadata.call_metadata_llm") as call_mock:
+            result = metadata.ensure_conversation_metadata(
+                note_path=note_path,
+                summary_config=summary_config,
+                ledger_writer=ledger_writer,
+            )
+            assert result.status == "skipped"
+            assert result.reason == "up_to_date"
+            call_mock.assert_not_called()
+
+    def test_daily_note_includes_signpost_and_question(self, tmp_path):
+        vault_root = tmp_path / "vault"
+        vault_root.mkdir(parents=True)
+
+        note_dir = vault_root / "40_chatgpt" / "conversations" / "2022" / "01" / "01"
+        note_dir.mkdir(parents=True, exist_ok=True)
+        note_path = note_dir / "Test Conversation.md"
+        note_path.write_text(
+            """---
+source: chatgpt_export
+conversation_id: conv_1
+totem_signpost: "Maps uncertainty to control signals."
+totem_summary_confidence: "partial"
+totem_open_questions:
+  - "Which emotion am I avoiding?"
+---
+# Test Conversation
+""",
+            encoding="utf-8",
+        )
+
+        conversations = [
+            models.ChatGptConversation(
+                conversation_id="conv_1",
+                title="Test Conversation",
+                created_at=datetime(2022, 1, 1, 9, 0, 0, tzinfo=timezone.utc),
+                updated_at=datetime(2022, 1, 1, 9, 5, 0, tzinfo=timezone.utc),
+                messages=[],
+            )
+        ]
+
+        result = daily_note.write_daily_note_chatgpt_block(
+            conversations,
+            "2022-01-01",
+            vault_root,
+            Mock(),
+            {"conv_1": note_path},
+            include_open_question_in_daily=True,
+        )
+
+        daily_file = (
+            vault_root
+            / "5.0 Journal"
+            / "5.1 Daily"
+            / "2022"
+            / "01"
+            / "2022-01-01.md"
+        )
+        content = daily_file.read_text(encoding="utf-8")
+        assert "Test Conversation" in content
+        assert "Maps uncertainty to control signals. ⏳" in content
+        assert "Q: Which emotion am I avoiding?" in content
+
+    def test_frontmatter_update_preserves_unrelated_keys(self):
+        note_text = """---
+source: chatgpt_export
+other_key: "keep"
+totem_signpost: "old"
+totem_summary: "old summary"
+---
+# Body
+"""
+        front_lines, body_text, has_frontmatter = metadata.split_frontmatter(note_text)
+        assert has_frontmatter is True
+        updates = {
+            "totem_signpost": "new",
+            "totem_summary": "new summary",
+            "totem_themes": ["theme"],
+            "totem_open_questions": ["question?"],
+            "totem_summary_confidence": "partial",
+            "totem_input_chars_used": 10,
+            "totem_input_chars_total": 100,
+            "totem_input_coverage_ratio": 0.1,
+            "totem_input_selection_strategy": "salience",
+            "totem_meta_provider": "openai",
+            "totem_meta_model": "gpt-4o-mini",
+            "totem_meta_version": 1,
+            "totem_meta_created_at": "2026-01-23T00:00:00+00:00",
+        }
+        updated = metadata.update_frontmatter(
+            note_text=note_text,
+            frontmatter_lines=front_lines,
+            body_text=body_text,
+            updates=updates,
+        )
+        front_lines_updated, body_text_updated, has_frontmatter_updated = metadata.split_frontmatter(updated)
+        assert has_frontmatter_updated is True
+        assert body_text_updated.strip() == "# Body"
+        assert "other_key: \"keep\"" in "\n".join(front_lines_updated)
+        assert "totem_signpost: \"new\"" in "\n".join(front_lines_updated)
+        assert "totem_signpost: \"old\"" not in "\n".join(front_lines_updated)
+
+    def test_metadata_failure_returns_failed(self, tmp_path, monkeypatch):
+        note_path = tmp_path / "note.md"
+        note_path.write_text(
+            """---
+source: chatgpt_export
+conversation_id: conv_1
+---
+# Title
+## Transcript
+User: Test
+""",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        summary_config = ChatGptSummaryConfig(provider="openai", version=1)
+        ledger_writer = Mock()
+
+        with patch("totem.chatgpt.metadata.call_metadata_llm", side_effect=ValueError("boom")):
+            result = metadata.ensure_conversation_metadata(
+                note_path=note_path,
+                summary_config=summary_config,
+                ledger_writer=ledger_writer,
+            )
+            assert result.status == "failed"
 
     def test_link_vault_validates_vault_exists(self, tmp_path):
         """Test that link-vault validates vault exists and has markers."""

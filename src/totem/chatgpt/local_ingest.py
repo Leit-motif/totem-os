@@ -13,6 +13,7 @@ from ..paths import VaultPaths
 from ..config import TotemConfig
 from .conversation_parser import parse_conversations_json
 from .daily_note import write_daily_note_chatgpt_block
+from .metadata import ensure_conversation_metadata
 from .obsidian_writer import write_conversation_note
 
 logger = logging.getLogger(__name__)
@@ -140,6 +141,11 @@ def ingest_from_zip(
             )
             written_notes.append(note_path)
             conversation_note_paths[conv.conversation_id] = note_path
+            ensure_conversation_metadata(
+                note_path=note_path,
+                summary_config=config.chatgpt_export.summary,
+                ledger_writer=ledger_writer,
+            )
 
         enable_daily_notes = True
         daily_result = None
@@ -150,6 +156,7 @@ def ingest_from_zip(
                 obsidian_vault,
                 ledger_writer,
                 conversation_note_paths,
+                config.chatgpt_export.summary.include_open_question_in_daily,
             )
 
         ledger_writer.append_event(

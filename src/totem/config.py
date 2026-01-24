@@ -32,8 +32,8 @@ def _find_repo_root(start_dir: Path) -> Path:
         current_dir = parent_dir
 
 
-def _load_repo_config(repo_root: Path) -> Optional[Path]:
-    """Load vault_root from .totem/config.toml if it exists."""
+def _load_repo_config_data(repo_root: Path) -> Optional[dict]:
+    """Load repo config data from .totem/config.toml if it exists."""
     config_file = repo_root / ".totem" / "config.toml"
 
     if not config_file.exists():
@@ -41,17 +41,34 @@ def _load_repo_config(repo_root: Path) -> Optional[Path]:
 
     try:
         with open(config_file, "rb") as f:
-            data = tomllib.load(f)
-
-        vault_root_str = data.get("vault_root")
-        if vault_root_str:
-            vault_path = Path(vault_root_str).resolve()
-            return vault_path
-
+            return tomllib.load(f)
     except Exception:
         # If config file is malformed, ignore it
-        pass
+        return None
 
+
+def _load_repo_config(repo_root: Path) -> Optional[Path]:
+    """Load vault_root from .totem/config.toml if it exists."""
+    data = _load_repo_config_data(repo_root)
+    if not data:
+        return None
+    vault_root_str = data.get("vault_root")
+    if vault_root_str:
+        return Path(vault_root_str).resolve()
+    return None
+
+
+def _get_repo_config_value(data: Optional[dict], keys: list[str]) -> Optional[str]:
+    """Safely get a nested repo config value."""
+    if not data:
+        return None
+    current = data
+    for key in keys:
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current[key]
+    if isinstance(current, str):
+        return current
     return None
 
 
@@ -60,6 +77,13 @@ def _has_vault_markers(vault_path: Path) -> bool:
     system_dir = vault_path / "90_system"
     config_file = system_dir / "config.yaml"
     return config_file.exists()
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def resolve_vault_root(
@@ -161,6 +185,23 @@ def resolve_vault_root(
         return Path.cwd() / "totem_vault"
 
 
+class ChatGptSummaryConfig(BaseModel):
+    """Configuration for ChatGPT conversation metadata generation."""
+
+    enabled: bool = Field(default=True)
+    provider: Literal["auto", "gemini", "openai"] = Field(default="auto")
+    model: Optional[str] = Field(default=None)
+    temperature: float = Field(default=0.2)
+    timeout_seconds: int = Field(default=45)
+    max_input_chars: int = Field(default=14000)
+    include_open_question_in_daily: bool = Field(default=True)
+    version: int = Field(default=1)
+    backfill_enabled: bool = Field(default=True)
+    backfill_batch_size: int = Field(default=25)
+    backfill_limit: Optional[int] = Field(default=None)
+    backfill_sleep_ms: int = Field(default=0)
+
+
 class ChatGptExportConfig(BaseModel):
     """Configuration for ChatGPT export ingestion."""
 
@@ -173,6 +214,7 @@ class ChatGptExportConfig(BaseModel):
     obsidian_chatgpt_dir: str = Field(default="40_chatgpt/conversations")
     obsidian_daily_dir: str = Field(default="40_chatgpt/daily")
     timezone: str = Field(default="America/Chicago")
+    summary: ChatGptSummaryConfig = Field(default_factory=ChatGptSummaryConfig)
 
 
 class LaunchdConfig(BaseModel):
@@ -209,6 +251,11 @@ class TotemConfig(BaseModel):
         """
         # Resolve vault path using the new resolver
         vault_path = resolve_vault_root(mode, cli_vault_path)
+        repo_config = _load_repo_config_data(_find_repo_root(Path.cwd()))
+        repo_summary_provider = _get_repo_config_value(repo_config, ["chatgpt", "summary", "provider"])
+        repo_summary_model = _get_repo_config_value(repo_config, ["chatgpt", "summary", "model"])
+        summary_provider_env = os.environ.get("TOTEM_CHATGPT_SUMMARY_PROVIDER")
+        summary_model_env = os.environ.get("TOTEM_CHATGPT_SUMMARY_MODEL")
 
         return cls(
             vault_path=vault_path,
@@ -233,6 +280,27 @@ class TotemConfig(BaseModel):
                     "40_chatgpt/daily"
                 ),
                 timezone=os.environ.get("TOTEM_CHATGPT_TIMEZONE", "America/Chicago"),
+                summary=ChatGptSummaryConfig(
+                    enabled=_env_bool("TOTEM_CHATGPT_SUMMARY_ENABLED", True),
+                    provider=summary_provider_env or repo_summary_provider or "auto",
+                    model=summary_model_env or repo_summary_model,
+                    temperature=float(os.environ.get("TOTEM_CHATGPT_SUMMARY_TEMPERATURE", "0.2")),
+                    timeout_seconds=int(os.environ.get("TOTEM_CHATGPT_SUMMARY_TIMEOUT_SECONDS", "45")),
+                    max_input_chars=int(os.environ.get("TOTEM_CHATGPT_SUMMARY_MAX_INPUT_CHARS", "14000")),
+                    include_open_question_in_daily=_env_bool(
+                        "TOTEM_CHATGPT_SUMMARY_INCLUDE_OPEN_QUESTION_IN_DAILY",
+                        True,
+                    ),
+                    version=int(os.environ.get("TOTEM_CHATGPT_SUMMARY_VERSION", "1")),
+                    backfill_enabled=_env_bool("TOTEM_CHATGPT_SUMMARY_BACKFILL_ENABLED", True),
+                    backfill_batch_size=int(os.environ.get("TOTEM_CHATGPT_SUMMARY_BACKFILL_BATCH_SIZE", "25")),
+                    backfill_limit=(
+                        int(os.environ["TOTEM_CHATGPT_SUMMARY_BACKFILL_LIMIT"])
+                        if os.environ.get("TOTEM_CHATGPT_SUMMARY_BACKFILL_LIMIT")
+                        else None
+                    ),
+                    backfill_sleep_ms=int(os.environ.get("TOTEM_CHATGPT_SUMMARY_BACKFILL_SLEEP_MS", "0")),
+                ),
             ),
             launchd=LaunchdConfig(
                 label=os.environ.get("TOTEM_LAUNCHD_LABEL", "com.totem.chatgpt.export.ingest"),
@@ -261,6 +329,19 @@ chatgpt_export:
   obsidian_chatgpt_dir: '{self.chatgpt_export.obsidian_chatgpt_dir}'
   obsidian_daily_dir: '{self.chatgpt_export.obsidian_daily_dir}'
   timezone: '{self.chatgpt_export.timezone}'
+  summary:
+    enabled: {self.chatgpt_export.summary.enabled}
+    provider: '{self.chatgpt_export.summary.provider}'
+    model: '{self.chatgpt_export.summary.model or ""}'
+    temperature: {self.chatgpt_export.summary.temperature}
+    timeout_seconds: {self.chatgpt_export.summary.timeout_seconds}
+    max_input_chars: {self.chatgpt_export.summary.max_input_chars}
+    include_open_question_in_daily: {self.chatgpt_export.summary.include_open_question_in_daily}
+    version: {self.chatgpt_export.summary.version}
+    backfill_enabled: {self.chatgpt_export.summary.backfill_enabled}
+    backfill_batch_size: {self.chatgpt_export.summary.backfill_batch_size}
+    backfill_limit: {self.chatgpt_export.summary.backfill_limit}
+    backfill_sleep_ms: {self.chatgpt_export.summary.backfill_sleep_ms}
 
 # Launchd configuration for automated scheduling
 launchd:

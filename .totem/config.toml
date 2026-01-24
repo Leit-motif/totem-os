@@ -1,0 +1,8 @@
+# Totem OS repository configuration (non-secrets)
+
+# Optional: link a default vault for this repo
+vault_root = "/Users/amrit/My Obsidian Vault"
+
+[chatgpt.summary]
+provider = "gemini"
+model = "gemini-2.5-flash-lite"

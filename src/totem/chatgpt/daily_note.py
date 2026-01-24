@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 
 from ..ledger import LedgerWriter
 from .models import ChatGptConversation
+from .metadata import read_metadata_fields
 
 from pydantic import BaseModel
 
@@ -28,6 +29,7 @@ def write_daily_note_chatgpt_block(
     vault_root: Path,
     ledger_writer: LedgerWriter,
     conversation_note_paths: Optional[Dict[str, Path]] = None,
+    include_open_question_in_daily: bool = True,
 ) -> DailyNoteResult:
     """Write or update ChatGPT block in daily note with idempotency.
 
@@ -66,6 +68,7 @@ def write_daily_note_chatgpt_block(
             vault_root,
             ledger_writer,
             conversation_note_paths,
+            include_open_question_in_daily,
         )
         total_processed += result.conversations_count
         if result.block_replaced:
@@ -93,6 +96,7 @@ def _write_single_date_block(
     vault_root: Path,
     ledger_writer: LedgerWriter,
     conversation_note_paths: Optional[Dict[str, Path]] = None,
+    include_open_question_in_daily: bool = True,
 ) -> DailyNoteResult:
     """Write ChatGPT block for a single date."""
     # Sort conversations by creation time
@@ -122,6 +126,24 @@ def _write_single_date_block(
         )
 
         block_lines.append(f"- [[{link_path}]]")
+
+        note_path = None
+        if conversation_note_paths and conv.conversation_id in conversation_note_paths:
+            note_path = conversation_note_paths[conv.conversation_id]
+
+        if note_path and note_path.exists():
+            metadata = read_metadata_fields(note_path)
+            signpost = metadata.get("totem_signpost")
+            if signpost:
+                signpost_text = str(signpost).replace("\n", " ").strip()
+                if metadata.get("totem_summary_confidence") == "partial":
+                    signpost_text = f"{signpost_text} ⏳"
+                block_lines.append(f"  - {signpost_text}")
+
+            open_questions = metadata.get("totem_open_questions") or []
+            if include_open_question_in_daily and open_questions:
+                question = str(open_questions[0]).replace("\n", " ").strip()
+                block_lines.append(f"  - Q: {question}")
 
     block_lines.extend(["", "<!-- TOTEM:CHATGPT:END -->"])
     chatgpt_block = "\n".join(block_lines)
