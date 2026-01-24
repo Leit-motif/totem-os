@@ -20,3 +20,14 @@ The initial version focuses exclusively on backend functionality:
 - full auditability via an append-only ledger.
 
 No frontend, embeddings, or automation beyond this core loop are included in v0.1.
+
+## Development Setup
+
+For development setup instructions, see [docs/dev_setup.md](docs/dev_setup.md).
+
+Quick start:
+```bash
+./scripts/dev_bootstrap.sh
+source .venv/bin/activate
+totem --version
+```
