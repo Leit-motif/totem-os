@@ -40,12 +40,12 @@ def compute_content_hash(conversation: ChatGptConversation) -> str:
     return hashlib.sha256(content_str.encode('utf-8')).hexdigest()
 
 
-def format_conversation_markdown(conversation: ChatGptConversation, gmail_msg_id: str) -> str:
+def format_conversation_markdown(conversation: ChatGptConversation, ingest_source: str) -> str:
     """Format conversation as Obsidian markdown with frontmatter.
 
     Args:
         conversation: The conversation to format
-        gmail_msg_id: Gmail message ID for tracking
+        ingest_source: Source identifier for tracking (e.g., local_zip)
 
     Returns:
         Complete markdown content
@@ -63,7 +63,7 @@ def format_conversation_markdown(conversation: ChatGptConversation, gmail_msg_id
         f"title: \"{escaped_title}\"",
         f"created_at: {conversation.created_at.isoformat() if conversation.created_at else ''}",
         f"updated_at: {conversation.updated_at.isoformat() if conversation.updated_at else ''}",
-        f"ingested_from: gmail:{gmail_msg_id}",
+        f"ingested_from: {ingest_source}",
         f"content_hash: {content_hash}",
         "---",
         "",
@@ -102,7 +102,7 @@ def format_conversation_markdown(conversation: ChatGptConversation, gmail_msg_id
 def write_conversation_note(
     conversation: ChatGptConversation,
     obsidian_dir: Path,
-    gmail_msg_id: str,
+    ingest_source: str,
     timezone: str = "America/Chicago",
     run_date_str: str = ""
 ) -> Path:
@@ -111,7 +111,7 @@ def write_conversation_note(
     Args:
         conversation: The conversation to write
         obsidian_dir: Base Obsidian ChatGPT directory
-        gmail_msg_id: Gmail message ID for tracking
+        ingest_source: Source identifier for tracking
         timezone: Timezone for date-based organization
         run_date_str: Fallback date string (YYYY-MM-DD)
 
@@ -166,7 +166,7 @@ def write_conversation_note(
             logger.warning(f"Could not read existing file {note_path}: {e}")
 
     # Generate and write new content
-    markdown_content = format_conversation_markdown(conversation, gmail_msg_id)
+    markdown_content = format_conversation_markdown(conversation, ingest_source)
 
     note_path.write_text(markdown_content, encoding='utf-8')
     logger.info(f"Wrote conversation note: {note_path}")

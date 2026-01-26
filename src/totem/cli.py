@@ -1,6 +1,7 @@
 """Typer-based CLI for Totem OS."""
 
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,16 @@ from .distill import (
     process_distillation_dry_run,
     undo_canon_write,
 )
+from .ingest_manifest import (
+    IngestCounts,
+    IngestErrorItem,
+    append_manifest_record,
+    build_manifest_record,
+    latest_record_by_source,
+    load_manifest_records,
+    totals_by_source,
+    try_get_git_sha,
+)
 from .ledger import LedgerWriter, read_ledger_tail
 from .llm import get_llm_client
 from .paths import VaultPaths
@@ -29,6 +40,12 @@ from .review import (
     load_or_create_proposals,
 )
 from .route import process_capture_routing
+from .chatgpt.local_ingest import (
+    LocalIngestError,
+    ingest_from_downloads_with_summary,
+    ingest_from_zip_with_summary,
+)
+from .omi.ingest import OmiIngestCrash, sync_omi_transcripts
 from .agents.intent_arbiter import IntentArbiterAgent
 from .models.intent import IntentType
 
@@ -59,6 +76,12 @@ app = typer.Typer(
 
 
 console = Console()
+
+def _parse_iso_ts(ts: str) -> datetime:
+    """Parse ISO timestamp with optional Z suffix."""
+    if ts.endswith("Z"):
+        ts = ts.replace("Z", "+00:00")
+    return datetime.fromisoformat(ts)
 
 
 @app.command()
@@ -303,6 +326,234 @@ def capture(
         raise typer.Exit(code=1)
 
 
+@app.command()
+def ingest(
+    source: str = typer.Option(
+        None,
+        "--source",
+        "-s",
+        help="Ingest source: 'omi' or 'chatgpt'",
+    ),
+    all_sources: bool = typer.Option(
+        False,
+        "--all",
+        help="Run ingestion for both sources",
+    ),
+    full_history: bool = typer.Option(
+        False,
+        "--full-history",
+        help="Run a full-history ingestion",
+    ),
+    date: str = typer.Option(
+        None,
+        "--date",
+        "-d",
+        help="Date for Omi ingestion (YYYY-MM-DD, default: today)",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="ChatGPT: preview mode without writing files",
+    ),
+):
+    """Ingest from Omi and/or ChatGPT with manifest recording."""
+    if all_sources and source:
+        console.print("[red]Error: Use either --all or --source, not both[/red]")
+        raise typer.Exit(code=1)
+
+    if not all_sources and not source:
+        console.print("[red]Error: Must provide --source or --all[/red]")
+        raise typer.Exit(code=1)
+
+    if source and source not in {"omi", "chatgpt"}:
+        console.print("[red]Error: --source must be 'omi' or 'chatgpt'[/red]")
+        raise typer.Exit(code=1)
+
+    vault_path = get_global_vault_path()
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
+    paths = VaultPaths.from_config(config)
+
+    if not paths.system.exists():
+        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
+
+    ledger_writer = LedgerWriter(paths.ledger_file)
+    records = load_manifest_records(paths)
+    latest_by_source = latest_record_by_source(records)
+
+    from . import __version__
+    from .config import _find_repo_root
+
+    git_sha = try_get_git_sha(_find_repo_root(Path.cwd()))
+
+    def _append_record(record):
+        append_manifest_record(paths, record)
+        console.print(f"[green]✓[/green] Manifest updated: {paths.ingest_manifest_file}")
+
+    if all_sources or source == "omi":
+        resume_from = None
+        if full_history:
+            last = latest_by_source.get("omi")
+            if last and last.last_successful_item_timestamp:
+                resume_from = _parse_iso_ts(last.last_successful_item_timestamp)
+
+        try:
+            summary = sync_omi_transcripts(
+                date=date,
+                sync_all=full_history,
+                write_daily_note=True,
+                obsidian_vault=Path(os.getenv("TOTEM_VAULT_PATH", "/Users/amrit/My Obsidian Vault")),
+                ledger_writer=ledger_writer,
+                vault_paths=paths,
+                resume_from=resume_from,
+            )
+        except OmiIngestCrash as e:
+            console.print(f"[red]Injected crash:[/red] {e}")
+            raise typer.Exit(code=1)
+
+        errors = [IngestErrorItem(**err) for err in summary.errors]
+        counts = IngestCounts(
+            discovered=summary.segments_total,
+            ingested=summary.segments_written,
+            skipped=summary.segments_skipped,
+            errored=len(errors),
+        )
+
+        record = build_manifest_record(
+            source="omi",
+            run_id=ledger_writer.run_id,
+            run_type="full_history" if full_history else "date",
+            window_start=summary.window_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            window_end=summary.window_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            counts=counts,
+            last_successful_item_timestamp=summary.last_successful_item_timestamp,
+            errors=errors,
+            app_version=__version__,
+            git_sha=git_sha,
+            details={
+                "conversations_count": summary.conversations_count,
+                "days_processed": summary.days_processed,
+                "resume_from": resume_from.strftime("%Y-%m-%dT%H:%M:%SZ") if resume_from else None,
+            },
+            cursor={
+                "last_successful_item_timestamp": summary.last_successful_item_timestamp,
+            },
+        )
+        _append_record(record)
+
+        console.print(
+            f"[cyan]Omi[/cyan]: segments written={summary.segments_written} "
+            f"skipped={summary.segments_skipped} days={summary.days_processed}"
+        )
+
+    if all_sources or source == "chatgpt":
+        if dry_run:
+            console.print("[red]Error: ChatGPT local ZIP ingest does not support --dry-run[/red]")
+            raise typer.Exit(code=1)
+
+        def _progress(processed: int, total: int, conv_id: str) -> None:
+            console.print(f"[dim]ChatGPT progress:[/dim] {processed}/{total} ({conv_id})")
+
+        try:
+            summary = ingest_from_downloads_with_summary(
+                config=config,
+                vault_paths=paths,
+                ledger_writer=ledger_writer,
+                downloads_dir=Path.home() / "Downloads",
+                limit=50,
+                progress_callback=_progress,
+            )
+        except LocalIngestError as e:
+            console.print(f"[red]ChatGPT ingest failed:[/red] {e}")
+            raise typer.Exit(code=1)
+
+        if summary is None:
+            console.print("[yellow]No valid ChatGPT export ZIP found in Downloads[/yellow]")
+            return
+
+        skipped_conversations = max(0, summary.conversations_parsed - summary.notes_written)
+        counts = IngestCounts(
+            discovered=summary.conversations_total,
+            ingested=summary.notes_written,
+            skipped=skipped_conversations,
+            errored=0,
+        )
+
+        record = build_manifest_record(
+            source="chatgpt",
+            run_id=ledger_writer.run_id,
+            run_type="full_history" if full_history else "latest",
+            window_start=None,
+            window_end=None,
+            counts=counts,
+            last_successful_item_timestamp=summary.last_successful_item_timestamp,
+            errors=[],
+            app_version=__version__,
+            git_sha=git_sha,
+            details={
+                "zip_path": str(summary.zip_path),
+                "conversations_total": summary.conversations_total,
+                "conversations_parsed": summary.conversations_parsed,
+                "notes_written": summary.notes_written,
+                "downloads_dir": str(Path.home() / "Downloads"),
+            },
+            cursor={
+                "last_successful_item_timestamp": summary.last_successful_item_timestamp,
+            },
+        )
+        _append_record(record)
+
+        console.print(
+            f"[cyan]ChatGPT[/cyan]: notes written={summary.notes_written} "
+            f"from zip={summary.zip_path.name}"
+        )
+
+
+@app.command("ingest-report")
+def ingest_report():
+    """Print a summary of the ingestion manifest."""
+    vault_path = get_global_vault_path()
+    config = TotemConfig.from_env(cli_vault_path=vault_path)
+    paths = VaultPaths.from_config(config)
+
+    if not paths.system.exists():
+        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
+        console.print("[yellow]Run 'totem init' first[/yellow]")
+        raise typer.Exit(code=1)
+
+    records = load_manifest_records(paths)
+    if not records:
+        console.print("[yellow]No manifest records found.[/yellow]")
+        console.print(f"[dim]Expected: {paths.ingest_manifest_file}[/dim]")
+        return
+
+    latest = latest_record_by_source(records)
+    totals = totals_by_source(records)
+
+    table = Table(title="Ingestion Manifest Summary")
+    table.add_column("Source", style="cyan", no_wrap=True)
+    table.add_column("Last Run (UTC)", style="magenta")
+    table.add_column("Latest Counts", style="yellow")
+    table.add_column("Last Success", style="green")
+    table.add_column("Total Ingested", style="dim")
+
+    for source in ["omi", "chatgpt"]:
+        record = latest.get(source)
+        if not record:
+            continue
+        counts = record.counts
+        totals_counts = totals.get(source, IngestCounts())
+        table.add_row(
+            source,
+            record.created_at,
+            f"d={counts.discovered} i={counts.ingested} s={counts.skipped} e={counts.errored}",
+            record.last_successful_item_timestamp or "-",
+            str(totals_counts.ingested),
+        )
+
+    console.print(table)
+
 omi_app = typer.Typer(help="Omi transcript commands")
 app.add_typer(omi_app, name="omi")
 
@@ -340,16 +591,6 @@ def omi_sync(
 
     Idempotent: running multiple times will not create duplicates.
     """
-    import os
-    from datetime import datetime, timezone
-    from pathlib import Path
-    from collections import defaultdict
-
-    from .omi.client import OmiClient
-    from .omi.daily_note import write_daily_note_omi_block
-    from .omi.writer import write_transcripts_to_vault
-    from .omi.trace import write_sync_trace
-
     # Try to load OMI_API_KEY from .env if not in environment
     if not os.environ.get("OMI_API_KEY") and Path(".env").exists():
         for line in Path(".env").read_text().splitlines():
@@ -359,264 +600,73 @@ def omi_sync(
                     os.environ["OMI_API_KEY"] = v.strip().strip('"').strip("'")
                     break
 
-    # Read Obsidian vault path from env var or use default
     obsidian_vault_str = os.getenv("TOTEM_VAULT_PATH", "/Users/amrit/My Obsidian Vault")
     obsidian_vault = Path(obsidian_vault_str)
 
-    # Get global vault path
     vault_path = get_global_vault_path()
-
-    # Load Totem vault configuration for ledger
     config = TotemConfig.from_env(cli_vault_path=vault_path)
     paths = VaultPaths.from_config(config)
-    
-    # Check if Totem vault exists
+
     if not paths.system.exists():
         console.print(f"[red]Error: Totem vault not initialized at {config.vault_path}[/red]")
         console.print("[yellow]Run 'totem init' first[/yellow]")
         raise typer.Exit(code=1)
-    
-    # Determine date range
-    if sync_all:
-        # Start from a distant past to get everything
-        start_date = datetime(2020, 1, 1, 0, 0, 0)
-        end_date = datetime.now()
-        console.print("[cyan]Syncing all Omi history...[/cyan]")
-    else:
-        # Determine specific date (today if not provided)
-        if date:
-            date_str = date
-            try:
-                datetime.strptime(date_str, "%Y-%m-%d")
-            except ValueError:
-                console.print(f"[red]Error: Invalid date format '{date_str}'. Use YYYY-MM-DD[/red]")
-                raise typer.Exit(code=1)
-        else:
-            date_str = datetime.now().strftime("%Y-%m-%d")
-        
-        console.print(f"[cyan]Syncing Omi transcripts for {date_str}...[/cyan]")
-        year, month, day = map(int, date_str.split("-"))
-        start_date = datetime(year, month, day, 0, 0, 0)
-        end_date = datetime(year, month, day, 23, 59, 59)
-    
-    # Initialize ledger writer
+
     ledger_writer = LedgerWriter(paths.ledger_file)
-    
+
     try:
-        # Initialize Omi client
-        client = OmiClient()
-        
-        # Track timing
-        sync_start = datetime.now(timezone.utc)
-        
-        # Fetch conversations
-        console.print("[dim]Fetching conversations from Omi API...[/dim]")
-        conversations = client.fetch_conversations(start_date, end_date)
-        
-        if not conversations:
-            label = "history" if sync_all else date_str
-            console.print(f"[yellow]No conversations found for {label}[/yellow]")
-            return
-        
-        console.print(f"[dim]Found {len(conversations)} conversation(s) total[/dim]")
-        
-        # Group conversations by date
-        by_date = defaultdict(list)
-        for conv in conversations:
-            # Use started_at to determine the daily file
-            d_str = conv.started_at.strftime("%Y-%m-%d")
-            by_date[d_str].append(conv)
-            
-        # Extract metadata for trace
-        conversation_ids = [conv.id for conv in conversations]
-        
-        # Log fetch event
-        ledger_writer.append_event(
-            event_type="OMI_SYNC_FETCHED",
-            payload={
-                "range_start": start_date.isoformat(),
-                "range_end": end_date.isoformat(),
-                "conversations_count": len(conversations),
-                "api_endpoint": f"{client.BASE_URL}/user/conversations",
-                "sync_all": sync_all
-            },
-        )
-        
-        # Process each date
-        total_written = 0
-        total_skipped = 0
-        days_processed = 0
-        
-        # Sort keys so we write in chronological order
-        for d_str in sorted(by_date.keys()):
-            day_convs = by_date[d_str]
-            console.print(f"[dim]Processing {d_str} ({len(day_convs)} convs)...[/dim]")
-            
-            result = write_transcripts_to_vault(
-                conversations=day_convs,
-                date_str=d_str,
-                vault_root=obsidian_vault,
-                ledger_writer=ledger_writer,
-            )
-            
-            # Write daily note block if requested
-            daily_note_result = None
-            if write_daily_note:
-                try:
-                    daily_note_result = write_daily_note_omi_block(
-                        conversations=day_convs,
-                        date_str=d_str,
-                        vault_root=obsidian_vault,
-                        ledger_writer=ledger_writer,
-                    )
-                    console.print(f"[green]  + Updated daily note: {daily_note_result.daily_note_path.name}[/green]")
-                except Exception as e:
-                    console.print(f"[red]  ! Failed to write daily note: {e}[/red]")
-            
-            total_written += result.segments_written
-            total_skipped += result.segments_skipped
-            days_processed += 1
-        
-        sync_end = datetime.now(timezone.utc)
-        
-        # Write trace (using the target date of the run or "bulk" if all)
-        trace_date_label = "history" if sync_all else date_str
-        
-        # If bulk sync, we'll use today's folder for the trace
-        trace_folder_date = datetime.now().strftime("%Y-%m-%d")
-        
-        # Create a combined result for trace
-        from .models.omi import OmiSyncResult
-        combined_result = OmiSyncResult(
-            date=trace_date_label,
-            conversations_count=len(conversations),
-            segments_written=total_written,
-            segments_skipped=total_skipped,
-            file_path=obsidian_vault # Reference path
-        )
-        
-        write_sync_trace(
-            sync_result=combined_result,
-            run_id=ledger_writer.run_id,
+        summary = sync_omi_transcripts(
+            date=date,
+            sync_all=sync_all,
+            write_daily_note=write_daily_note,
+            obsidian_vault=obsidian_vault,
+            ledger_writer=ledger_writer,
             vault_paths=paths,
-            date_str=trace_folder_date,
-            start_time=sync_start,
-            end_time=sync_end,
-            api_endpoint=f"{client.BASE_URL}/user/conversations",
-            api_params={
-                "start_date": start_date.isoformat(),
-                "end_date": end_date.isoformat(),
-                "include_transcript": "true",
-                "limit": 100,
-                "sync_all": sync_all,
-                "write_daily_note": write_daily_note
-            },
-            conversation_ids=conversation_ids,
-            daily_note_written=write_daily_note and days_processed > 0,  # Rough approximation for trace metadata
         )
-        
-        # Display summary
+
+        from . import __version__
+        from .config import _find_repo_root
+
+        git_sha = try_get_git_sha(_find_repo_root(Path.cwd()))
+        errors = [IngestErrorItem(**err) for err in summary.errors]
+        counts = IngestCounts(
+            discovered=summary.segments_total,
+            ingested=summary.segments_written,
+            skipped=summary.segments_skipped,
+            errored=len(errors),
+        )
+
+        record = build_manifest_record(
+            source="omi",
+            run_id=ledger_writer.run_id,
+            run_type="full_history" if sync_all else "date",
+            window_start=summary.window_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            window_end=summary.window_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            counts=counts,
+            last_successful_item_timestamp=summary.last_successful_item_timestamp,
+            errors=errors,
+            app_version=__version__,
+            git_sha=git_sha,
+            details={
+                "conversations_count": summary.conversations_count,
+                "days_processed": summary.days_processed,
+            },
+            cursor={
+                "last_successful_item_timestamp": summary.last_successful_item_timestamp,
+            },
+        )
+        append_manifest_record(paths, record)
+
         console.print()
         console.print("[bold green]Sync complete![/bold green]")
-        console.print(f"  Days processed: {days_processed}")
-        console.print(f"  Total conversations found: {len(conversations)}")
-        console.print(f"  New segments written: {total_written}")
-        console.print(f"  Existing segments skipped: {total_skipped}")
-        
-    except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(code=1)
+        console.print(f"  Days processed: {summary.days_processed}")
+        console.print(f"  Total conversations found: {summary.conversations_count}")
+        console.print(f"  New segments written: {summary.segments_written}")
+        console.print(f"  Existing segments skipped: {summary.segments_skipped}")
+        console.print(f"  Manifest: {paths.ingest_manifest_file}")
+
     except Exception as e:
         console.print(f"[red]Error during sync: {e}[/red]")
-        # stack trace for debugging if needed
-        # raise
-        raise typer.Exit(code=1)
-
-
-@chatgpt_app.command("ingest-latest-export")
-def chatgpt_ingest_latest_export(
-    debug: bool = typer.Option(
-        False,
-        "--debug",
-        help="Enable debug logging",
-    ),
-    dry_run: bool = typer.Option(
-        False,
-        "--dry-run",
-        help="Preview mode: show what would be done without making changes",
-    ),
-    lookback_days: int = typer.Option(
-        None,
-        "--lookback-days",
-        help="Override default Gmail query lookback period in days",
-    ),
-    gmail_query: str = typer.Option(
-        None,
-        "--gmail-query",
-        help="Override Gmail query completely (for debugging)",
-    ),
-    allow_http_download: bool = typer.Option(
-        False,
-        "--allow-http-download",
-        help="Allow HTTP download for ChatGPT export URLs (not recommended)",
-    ),
-):
-    """Ingest the latest unprocessed ChatGPT export from Gmail.
-
-    Downloads the most recent export email, extracts conversations, and writes
-    Obsidian notes. Idempotent - safe to run repeatedly.
-
-    Requires Gmail API credentials and proper configuration.
-    """
-    # Get global vault path
-    vault_path = get_global_vault_path()
-
-    # Load vault configuration
-    config = TotemConfig.from_env(cli_vault_path=vault_path)
-
-    paths = VaultPaths.from_config(config)
-
-    # Check if vault exists
-    if not paths.system.exists():
-        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
-        console.print("[yellow]Run 'totem init' first[/yellow]")
-        raise typer.Exit(code=1)
-
-    # Set up logging
-    import logging as _logging
-    log_level = _logging.DEBUG if debug else _logging.INFO
-    _logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-    # Initialize ledger writer
-    ledger_writer = LedgerWriter(paths.ledger_file)
-
-    try:
-        from .chatgpt.ingest import ingest_latest_export
-
-        success = ingest_latest_export(
-            config=config,
-            vault_paths=paths,
-            ledger_writer=ledger_writer,
-            debug=debug,
-            dry_run=dry_run,
-            lookback_days=lookback_days,
-            gmail_query_override=gmail_query,
-            allow_http_download=allow_http_download,
-        )
-
-        if success:
-            if dry_run:
-                console.print("[green]DRY RUN completed successfully - no changes made[/green]")
-            else:
-                console.print("[green]ChatGPT export ingestion completed successfully![/green]")
-        else:
-            console.print("[yellow]No new exports to process[/yellow]")
-
-    except Exception as e:
-        console.print(f"[red]Error during ingestion: {e}[/red]")
-        if debug:
-            import traceback
-            console.print(traceback.format_exc())
         raise typer.Exit(code=1)
 
 
@@ -639,15 +689,50 @@ def chatgpt_ingest_from_zip(
     ledger_writer = LedgerWriter(paths.ledger_file)
 
     try:
-        from .chatgpt.local_ingest import ingest_from_zip
-
-        ingest_from_zip(
+        summary = ingest_from_zip_with_summary(
             config=config,
             vault_paths=paths,
             ledger_writer=ledger_writer,
             zip_path=Path(zip_path),
         )
+
+        from . import __version__
+        from .config import _find_repo_root
+
+        git_sha = try_get_git_sha(_find_repo_root(Path.cwd()))
+        skipped_conversations = max(0, summary.conversations_parsed - summary.notes_written)
+        counts = IngestCounts(
+            discovered=summary.conversations_total,
+            ingested=summary.notes_written,
+            skipped=skipped_conversations,
+            errored=0,
+        )
+
+        record = build_manifest_record(
+            source="chatgpt",
+            run_id=ledger_writer.run_id,
+            run_type="local_zip",
+            window_start=None,
+            window_end=None,
+            counts=counts,
+            last_successful_item_timestamp=summary.last_successful_item_timestamp,
+            errors=[],
+            app_version=__version__,
+            git_sha=git_sha,
+            details={
+                "zip_path": str(summary.zip_path),
+                "conversations_total": summary.conversations_total,
+                "conversations_parsed": summary.conversations_parsed,
+                "notes_written": summary.notes_written,
+            },
+            cursor={
+                "last_successful_item_timestamp": summary.last_successful_item_timestamp,
+            },
+        )
+        append_manifest_record(paths, record)
+
         console.print("[green]ChatGPT export ingestion completed successfully![/green]")
+        console.print(f"[dim]Manifest: {paths.ingest_manifest_file}[/dim]")
 
     except Exception as e:
         console.print(f"[red]Error during ingestion: {e}[/red]")
@@ -682,22 +767,62 @@ def chatgpt_ingest_from_downloads(
     ledger_writer = LedgerWriter(paths.ledger_file)
 
     try:
-        from .chatgpt.local_ingest import ingest_from_downloads
+        def _progress(processed: int, total: int, conv_id: str) -> None:
+            console.print(f"[dim]ChatGPT progress:[/dim] {processed}/{total} ({conv_id})")
 
-        success = ingest_from_downloads(
+        summary = ingest_from_downloads_with_summary(
             config=config,
             vault_paths=paths,
             ledger_writer=ledger_writer,
             downloads_dir=Path(downloads_dir),
             limit=limit,
+            progress_callback=_progress,
         )
 
-        if success:
-            console.print("[green]ChatGPT export ingestion completed successfully![/green]")
-        else:
+        if not summary:
             console.print(
                 f"[yellow]No valid ChatGPT export ZIP found in {downloads_dir}[/yellow]"
             )
+            return
+
+        from . import __version__
+        from .config import _find_repo_root
+
+        git_sha = try_get_git_sha(_find_repo_root(Path.cwd()))
+        skipped_conversations = max(0, summary.conversations_parsed - summary.notes_written)
+        counts = IngestCounts(
+            discovered=summary.conversations_total,
+            ingested=summary.notes_written,
+            skipped=skipped_conversations,
+            errored=0,
+        )
+
+        record = build_manifest_record(
+            source="chatgpt",
+            run_id=ledger_writer.run_id,
+            run_type="local_downloads",
+            window_start=None,
+            window_end=None,
+            counts=counts,
+            last_successful_item_timestamp=summary.last_successful_item_timestamp,
+            errors=[],
+            app_version=__version__,
+            git_sha=git_sha,
+            details={
+                "zip_path": str(summary.zip_path),
+                "conversations_total": summary.conversations_total,
+                "conversations_parsed": summary.conversations_parsed,
+                "notes_written": summary.notes_written,
+                "downloads_dir": str(downloads_dir),
+            },
+            cursor={
+                "last_successful_item_timestamp": summary.last_successful_item_timestamp,
+            },
+        )
+        append_manifest_record(paths, record)
+
+        console.print("[green]ChatGPT export ingestion completed successfully![/green]")
+        console.print(f"[dim]Manifest: {paths.ingest_manifest_file}[/dim]")
 
     except Exception as e:
         console.print(f"[red]Error during ingestion: {e}[/red]")
@@ -766,181 +891,6 @@ def chatgpt_backfill_metadata(
 
     except Exception as e:
         console.print(f"[red]Error during metadata backfill: {e}[/red]")
-        raise typer.Exit(code=1)
-
-
-@chatgpt_app.command("doctor")
-def chatgpt_doctor():
-    """Run diagnostic checks for ChatGPT export ingestion setup.
-
-    Validates configuration, directory permissions, and Gmail authentication.
-    """
-    # Get global vault path
-    vault_path = get_global_vault_path()
-
-    # Load vault configuration
-    config = TotemConfig.from_env(cli_vault_path=vault_path)
-    paths = VaultPaths.from_config(config)
-
-    # Check if vault exists
-    if not paths.system.exists():
-        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
-        console.print("[yellow]Run 'totem init' first[/yellow]")
-        raise typer.Exit(code=1)
-
-    try:
-        from .chatgpt.ingest import doctor_check
-
-        console.print("[cyan]Running ChatGPT ingestion diagnostics...[/cyan]")
-        results = doctor_check(config, paths)
-
-        # Report results
-        if results["config_valid"]:
-            console.print("[green]✓[/green] Configuration is valid")
-        else:
-            console.print("[red]✗[/red] Configuration has errors:")
-            for error in results["errors"]:
-                console.print(f"  [red]- {error}[/red]")
-
-        if results["directories_writable"]:
-            console.print("[green]✓[/green] All directories are writable")
-        else:
-            console.print("[red]✗[/red] Directory permission errors:")
-            for error in results["errors"]:
-                if "writable" in error:
-                    console.print(f"  [red]- {error}[/red]")
-
-        if results["obsidian_dirs_exist"]:
-            console.print("[green]✓[/green] Obsidian directories exist")
-        else:
-            console.print("[yellow]⚠[/yellow] Obsidian directory warnings:")
-            for warning in results["warnings"]:
-                console.print(f"  [yellow]- {warning}[/yellow]")
-
-        if results["gmail_auth_works"] is True:
-            console.print("[green]✓[/green] Gmail authentication successful")
-        elif results["gmail_auth_works"] is False:
-            console.print("[red]✗[/red] Gmail authentication failed")
-            for error in results["errors"]:
-                if "Gmail" in error:
-                    console.print(f"  [red]- {error}[/red]")
-        else:
-            console.print("[dim]○[/dim] Gmail authentication not tested")
-
-        # Summary
-        has_errors = bool(results["errors"])
-        has_warnings = bool(results["warnings"])
-
-        if has_errors:
-            console.print(f"\n[red]Found {len(results['errors'])} error(s) that need to be fixed[/red]")
-            raise typer.Exit(code=1)
-        elif has_warnings:
-            console.print(f"\n[yellow]Found {len(results['warnings'])} warning(s) - check Obsidian directory setup[/yellow]")
-        else:
-            console.print("\n[green]All checks passed![/green]")
-
-    except Exception as e:
-        console.print(f"[red]Error running diagnostics: {e}[/red]")
-        raise typer.Exit(code=1)
-
-
-@chatgpt_app.command("install-launchd")
-def chatgpt_install_launchd():
-    """Generate and install macOS LaunchAgent for automated ChatGPT export ingestion.
-
-    Creates a plist file in ~/Library/LaunchAgents/ and prints the load command.
-    Does NOT automatically load the agent - you must run the printed command manually.
-    """
-    import os
-    import platform
-    from pathlib import Path
-
-    # Check if we're on macOS
-    if platform.system() != "Darwin":
-        console.print("[red]Error: launchd is only available on macOS[/red]")
-        raise typer.Exit(code=1)
-
-    # Get global vault path
-    vault_path = get_global_vault_path()
-
-    # Load vault configuration
-    config = TotemConfig.from_env(cli_vault_path=vault_path)
-    paths = VaultPaths.from_config(config)
-
-    # Check if vault exists
-    if not paths.system.exists():
-        console.print(f"[red]Error: Vault not initialized at {config.vault_path}[/red]")
-        console.print("[yellow]Run 'totem init' first[/yellow]")
-        raise typer.Exit(code=1)
-
-    try:
-        # Determine paths
-        node_path = Path(os.sys.executable).resolve()
-        cli_path = Path(__file__).resolve()
-
-        # Create LaunchAgents directory if it doesn't exist
-        launch_agents_dir = Path.home() / "Library" / "LaunchAgents"
-        launch_agents_dir.mkdir(parents=True, exist_ok=True)
-
-        # Generate plist content
-        plist_content = f'''<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0//EN">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{config.launchd.label}</string>
-
-    <key>ProgramArguments</key>
-    <array>
-        <string>{node_path}</string>
-        <string>{cli_path}</string>
-        <string>chatgpt</string>
-        <string>ingest-latest-export</string>
-    </array>
-
-    <key>StartInterval</key>
-    <integer>{config.launchd.interval_seconds}</integer>
-
-    <key>StandardOutPath</key>
-    <string>{paths.root / "logs" / "launchd_stdout.log"}</string>
-
-    <key>StandardErrorPath</key>
-    <string>{paths.root / "logs" / "launchd_stderr.log"}</string>
-
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>TOTEM_VAULT</key>
-        <string>{config.vault_path}</string>
-    </dict>
-</dict>
-</plist>'''
-
-        # Write plist file
-        plist_path = launch_agents_dir / f"{config.launchd.label}.plist"
-        plist_path.write_text(plist_content, encoding='utf-8')
-
-        console.print(f"[green]Created launchd plist:[/green] {plist_path}")
-
-        # Create logs directory
-        logs_dir = paths.root / "logs"
-        logs_dir.mkdir(exist_ok=True)
-
-        console.print(f"[green]Created logs directory:[/green] {logs_dir}")
-
-        # Print load command
-        console.print("\n[cyan]To load and start the launch agent, run:[/cyan]")
-        console.print(f"[bold]launchctl load -w {plist_path}[/bold]")
-
-        console.print("\n[cyan]To unload the launch agent:[/cyan]")
-        console.print(f"[bold]launchctl unload -w {plist_path}[/bold]")
-
-        console.print("\n[cyan]To check status:[/cyan]")
-        console.print(f"[bold]launchctl list | grep {config.launchd.label}[/bold]")
-
-        console.print(f"\n[dim]Note: The agent will run every {config.launchd.interval_seconds} seconds ({config.launchd.interval_seconds // 3600} hours)[/dim]")
-
-    except Exception as e:
-        console.print(f"[red]Error creating launchd configuration: {e}[/red]")
         raise typer.Exit(code=1)
 
 

@@ -46,6 +46,7 @@ class VaultPaths:
         self.ledger_file = self.system / "ledger.jsonl"
         self.review_events_file = self.learning / "review_events.jsonl"
         self.review_queue_file = self.review_queue / "proposals.jsonl"
+        self.ingest_manifest_file = self.system / "ingest_manifest.jsonl"
         
         # Memory files
         self.entities_file = self.memory / "entities.json"
@@ -167,4 +168,3 @@ class VaultPaths:
             Path to the daily note markdown file
         """
         return self.daily / f"{date_str}.md"
-

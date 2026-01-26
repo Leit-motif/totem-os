@@ -50,6 +50,10 @@ Run `totem --help` for the full option list. Dates default to **today (UTC)** un
 otherwise specified.
 
 Top-level commands:
+- `totem ingest --source omi --full-history`: full-history Omi ingest (records manifest).
+- `totem ingest --source chatgpt --full-history`: full-history ChatGPT ingest (records manifest).
+- `totem ingest --all --full-history`: full-history ingest for both sources.
+- `totem ingest-report`: print a concise manifest summary.
 - `totem link-vault <path>`: link an existing vault to this repo (`.totem/config.toml`).
 - `totem init [--force]`: create the vault structure and system files (idempotent).
 - `totem capture --text "..." [--date YYYY-MM-DD]`: capture raw text into inbox.
@@ -67,13 +71,49 @@ Ledger subcommands:
 Omi subcommands:
 - `totem omi sync [--date YYYY-MM-DD | --all] [--no-write-daily-note]`: sync Omi transcripts.
 
-ChatGPT export subcommands:
-- `totem chatgpt ingest-latest-export [--dry-run] [--debug]`: ingest newest Gmail export.
+ChatGPT export subcommands (local ZIP only; Gmail flow removed):
 - `totem chatgpt ingest-from-zip /path/to/export.zip`: ingest a local export zip.
 - `totem chatgpt ingest-from-downloads [--downloads-dir PATH] [--limit N]`: scan Downloads for export zips.
 - `totem chatgpt backfill-metadata [--limit N] [--dry-run]`: add metadata to existing notes.
-- `totem chatgpt doctor`: run diagnostics for ChatGPT ingestion setup.
-- `totem chatgpt install-launchd`: install macOS LaunchAgent for scheduled ingestion.
+
+## Full-History Ingest + Manifest
+
+The canonical ingestion manifest is stored at:
+`90_system/ingest_manifest.jsonl`
+
+Each ingestion run appends a record with:
+- source (`omi` or `chatgpt`)
+- run_id
+- ingestion window (start/end)
+- counts (discovered / ingested / skipped / errored)
+- last_successful_item_timestamp
+- error summary
+- app/version metadata
+
+### Run full-history ingestion
+```
+totem ingest --source omi --full-history
+totem ingest --source chatgpt --full-history
+totem ingest --all --full-history
+```
+
+For ChatGPT, full-history ingestion reads the most recent local export ZIP from
+`~/Downloads` (use `totem chatgpt ingest-from-zip` for an explicit file).
+
+### Report status
+```
+totem ingest-report
+```
+
+### Resumability
+- Omi full-history runs resume from the last successful timestamp in the manifest.
+- ChatGPT runs use local ZIP ingestion from Downloads; idempotency is ensured by content hashes and stable filenames.
+
+### Idempotency validation
+Run ingestion twice and compare outputs:
+```
+pytest tests/test_ingest_manifest.py -k "resume"
+```
 
 ## Development Setup
 

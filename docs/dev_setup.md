@@ -4,7 +4,7 @@ This guide helps you set up a clean, reproducible development environment for To
 
 ## Prerequisites
 
-- macOS (for launchd support)
+- macOS or Linux
 - Python 3.10+ (either `python3` or `python` command)
 
 ## Quick Setup
@@ -35,8 +35,8 @@ This guide helps you set up a clean, reproducible development environment for To
    totem --help
    # Should show the full command help
 
-   totem chatgpt doctor
-   # Should work (all runtime dependencies are installed)
+   totem chatgpt ingest-from-downloads
+   # Should ingest the latest local export ZIP (if present)
    ```
 
 ## Manual Setup (Alternative)
@@ -54,7 +54,7 @@ If you prefer step-by-step control:
    source .venv/bin/activate
    python -m pip install --upgrade pip setuptools wheel
    python -m pip install -e .
-   # Note: This installs ALL runtime dependencies including requests and Google API packages
+   # Note: This installs all runtime dependencies
    ```
 
 ## Available Commands
@@ -71,11 +71,8 @@ totem --help
 # Initialize a new vault
 totem init
 
-# Test ChatGPT integration
-totem chatgpt doctor
-
-# Run ChatGPT ingestion (dry-run)
-totem chatgpt ingest-latest-export --dry-run
+# Ingest latest ChatGPT export from Downloads
+totem chatgpt ingest-from-downloads
 ```
 
 ## Makefile Targets
@@ -86,8 +83,7 @@ The repository includes a `Makefile` for common development tasks:
 make venv              # Create virtual environment
 make install           # Install Totem OS in editable mode
 make test              # Run the test suite
-make doctor-chatgpt    # Run ChatGPT integration diagnostics
-make ingest-chatgpt-dry # Run ChatGPT ingestion in dry-run mode
+make ingest-chatgpt-local # Ingest latest ChatGPT export from Downloads
 make dev-setup         # Run complete development setup
 make clean             # Remove virtual environment and cache files
 ```
@@ -131,22 +127,21 @@ source .venv/bin/activate
 python -m pytest tests/ -v
 ```
 
-## ChatGPT Integration Setup
+## ChatGPT Integration Setup (Local ZIP Only)
 
-For the ChatGPT features to work:
+For ChatGPT ingestion:
 
-1. **Google API Credentials:**
-   - Go to [Google Cloud Console](https://console.cloud.google.com/)
-   - Create OAuth 2.0 credentials for Gmail API
-   - Save as `~/.config/totem/gmail_credentials.json`
-
-2. **Obsidian Vault:**
+1. **Obsidian Vault:**
    - Create or use an existing Obsidian vault
    - Update `obsidian_chatgpt_dir` and `obsidian_daily_dir` in your vault's `config.yaml`
 
-3. **Test Integration:**
+2. **Download Export ZIP:**
+   - Download your ChatGPT export ZIP in the browser
+   - Place it in `~/Downloads` or keep the path
+
+3. **Ingest:**
    ```bash
-   totem chatgpt doctor
+   totem chatgpt ingest-from-downloads
    ```
 
 ## Development Workflow

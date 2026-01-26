@@ -1,12 +1,13 @@
 """Local ZIP ingestion for ChatGPT exports."""
 
 import logging
+import json
 import os
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
-from urllib.parse import urlparse
+from typing import Callable, Optional
 
 from ..ledger import LedgerWriter
 from ..paths import VaultPaths
@@ -23,6 +24,46 @@ class LocalIngestError(Exception):
     """Exception raised for local ZIP ingestion errors."""
 
     pass
+
+
+@dataclass
+class LocalZipIngestSummary:
+    """Summary of a local ZIP ingestion run."""
+
+    zip_path: Path
+    conversations_total: int
+    conversations_parsed: int
+    notes_written: int
+    last_successful_item_timestamp: Optional[str]
+
+
+def _write_progress_checkpoint(
+    vault_paths: VaultPaths,
+    zip_path: Path,
+    *,
+    total: int,
+    processed: int,
+    notes_written: int,
+    last_conversation_id: Optional[str],
+    last_conversation_ts: Optional[str],
+    status: str,
+) -> None:
+    progress_dir = vault_paths.system / "ingest_progress"
+    progress_dir.mkdir(parents=True, exist_ok=True)
+    progress_path = progress_dir / f"chatgpt_local_zip_{zip_path.stem}.json"
+    payload = {
+        "zip_path": str(zip_path),
+        "status": status,
+        "total": total,
+        "processed": processed,
+        "notes_written": notes_written,
+        "last_conversation_id": last_conversation_id,
+        "last_conversation_timestamp": last_conversation_ts,
+        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    tmp_path = progress_path.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp_path.replace(progress_path)
 
 
 def _score_json_member(name: str, has_chat_html: bool) -> int:
@@ -68,13 +109,14 @@ def select_conversations_json_member(zip_path: Path) -> Optional[zipfile.ZipInfo
         return None
 
 
-def ingest_from_zip(
+def ingest_from_zip_with_summary(
     config: TotemConfig,
     vault_paths: VaultPaths,
     ledger_writer: LedgerWriter,
     zip_path: Path,
-) -> bool:
-    """Ingest a local ChatGPT export ZIP file."""
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
+) -> LocalZipIngestSummary:
+    """Ingest a local ChatGPT export ZIP file and return a summary."""
     if not zip_path.exists():
         raise LocalIngestError(f"ZIP file not found: {zip_path}")
     if zip_path.suffix.lower() != ".zip":
@@ -131,11 +173,26 @@ def ingest_from_zip(
         obsidian_vault = Path(os.getenv("TOTEM_VAULT_PATH", "/Users/amrit/My Obsidian Vault"))
         written_notes = []
         conversation_note_paths = {}
+        processed = 0
+        last_item_ts = None
+        last_conv_id = None
+        last_conv_ts = None
+        total_conversations = parsed_result.parsed_count
+        _write_progress_checkpoint(
+            vault_paths,
+            zip_path,
+            total=total_conversations,
+            processed=0,
+            notes_written=0,
+            last_conversation_id=None,
+            last_conversation_ts=None,
+            status="running",
+        )
         for conv in parsed_result.conversations:
             note_path = write_conversation_note(
                 conv,
                 obsidian_chatgpt_dir,
-                gmail_msg_id="local_zip",
+                ingest_source="local_zip",
                 timezone=config.chatgpt_export.timezone,
                 run_date_str=run_date_str,
             )
@@ -146,6 +203,27 @@ def ingest_from_zip(
                 summary_config=config.chatgpt_export.summary,
                 ledger_writer=ledger_writer,
             )
+            ts = conv.updated_at or conv.created_at
+            if ts:
+                ts_str = ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                if not last_item_ts or ts_str > last_item_ts:
+                    last_item_ts = ts_str
+                last_conv_ts = ts_str
+            last_conv_id = conv.conversation_id
+            processed += 1
+            if processed % 50 == 0 or processed == total_conversations:
+                _write_progress_checkpoint(
+                    vault_paths,
+                    zip_path,
+                    total=total_conversations,
+                    processed=processed,
+                    notes_written=len(written_notes),
+                    last_conversation_id=last_conv_id,
+                    last_conversation_ts=last_conv_ts,
+                    status="running",
+                )
+                if progress_callback:
+                    progress_callback(processed, total_conversations, conv.conversation_id)
 
         enable_daily_notes = True
         daily_result = None
@@ -158,6 +236,17 @@ def ingest_from_zip(
                 conversation_note_paths,
                 config.chatgpt_export.summary.include_open_question_in_daily,
             )
+
+        _write_progress_checkpoint(
+            vault_paths,
+            zip_path,
+            total=total_conversations,
+            processed=processed,
+            notes_written=len(written_notes),
+            last_conversation_id=last_conv_id,
+            last_conversation_ts=last_conv_ts,
+            status="completed",
+        )
 
         ledger_writer.append_event(
             event_type="CHATGPT_EXPORT_LOCAL_ZIP_INGESTED",
@@ -172,7 +261,13 @@ def ingest_from_zip(
         )
 
         logger.info("Local ZIP ingestion completed successfully")
-        return True
+        return LocalZipIngestSummary(
+            zip_path=zip_path,
+            conversations_total=parsed_result.total_count,
+            conversations_parsed=parsed_result.parsed_count,
+            notes_written=len(written_notes),
+            last_successful_item_timestamp=last_item_ts,
+        )
 
     except Exception as e:
         ledger_writer.append_event(
@@ -185,13 +280,25 @@ def ingest_from_zip(
         raise
 
 
-def ingest_from_downloads(
+def ingest_from_zip(
+    config: TotemConfig,
+    vault_paths: VaultPaths,
+    ledger_writer: LedgerWriter,
+    zip_path: Path,
+) -> bool:
+    """Ingest a local ChatGPT export ZIP file."""
+    ingest_from_zip_with_summary(config, vault_paths, ledger_writer, zip_path)
+    return True
+
+
+def ingest_from_downloads_with_summary(
     config: TotemConfig,
     vault_paths: VaultPaths,
     ledger_writer: LedgerWriter,
     downloads_dir: Path,
     limit: int = 50,
-) -> bool:
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
+) -> Optional[LocalZipIngestSummary]:
     """Find the newest valid export ZIP in downloads and ingest it."""
     if not downloads_dir.exists():
         raise LocalIngestError(f"Downloads directory not found: {downloads_dir}")
@@ -218,15 +325,30 @@ def ingest_from_downloads(
                 "limit": limit,
             },
         )
-        return False
+        return None
 
-    return ingest_from_zip(config, vault_paths, ledger_writer, selected_zip)
-
-
-def is_estuary_download_url(url: str) -> bool:
-    """Detect ChatGPT estuary export URLs that require browser auth."""
-    parsed = urlparse(url)
-    return (
-        parsed.netloc.lower().endswith("chatgpt.com")
-        and "/backend-api/estuary/content" in parsed.path
+    return ingest_from_zip_with_summary(
+        config,
+        vault_paths,
+        ledger_writer,
+        selected_zip,
+        progress_callback=progress_callback,
     )
+
+
+def ingest_from_downloads(
+    config: TotemConfig,
+    vault_paths: VaultPaths,
+    ledger_writer: LedgerWriter,
+    downloads_dir: Path,
+    limit: int = 50,
+) -> bool:
+    """Find the newest valid export ZIP in downloads and ingest it."""
+    result = ingest_from_downloads_with_summary(
+        config=config,
+        vault_paths=vault_paths,
+        ledger_writer=ledger_writer,
+        downloads_dir=downloads_dir,
+        limit=limit,
+    )
+    return result is not None

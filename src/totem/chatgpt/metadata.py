@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import logging
 import os
@@ -37,6 +38,7 @@ TOTEM_KEYS_ORDER = [
     "totem_meta_provider",
     "totem_meta_model",
     "totem_meta_version",
+    "totem_meta_hash",
     "totem_meta_created_at",
 ]
 
@@ -86,7 +88,11 @@ def ensure_conversation_metadata(
         frontmatter_lines, body_text, has_frontmatter = split_frontmatter(note_text)
         frontmatter_data = parse_frontmatter(frontmatter_lines)
 
-        if _is_metadata_up_to_date(frontmatter_data, summary_config.version):
+        expected_hash = compute_meta_hash(
+            frontmatter_data.get("content_hash"),
+            summary_config.version,
+        )
+        if _is_metadata_up_to_date(frontmatter_data, summary_config.version, expected_hash):
             return _log_skip(ledger_writer, note_path, reason="up_to_date")
 
         if dry_run:
@@ -149,6 +155,7 @@ def ensure_conversation_metadata(
                 "totem_meta_provider": provider,
                 "totem_meta_model": model,
                 "totem_meta_version": summary_config.version,
+                "totem_meta_hash": expected_hash,
                 "totem_meta_created_at": datetime.now(timezone.utc).isoformat(),
             }
         )
@@ -690,12 +697,26 @@ def format_yaml_string(value: Any) -> str:
     return f"\"{text}\""
 
 
-def _is_metadata_up_to_date(frontmatter_data: dict, version: int) -> bool:
-    return (
-        frontmatter_data.get("totem_meta_version") == version
-        and bool(frontmatter_data.get("totem_signpost"))
-        and bool(frontmatter_data.get("totem_summary"))
-    )
+def compute_meta_hash(content_hash: str | None, version: int) -> str | None:
+    """Compute deterministic metadata hash for idempotency."""
+    if not content_hash:
+        return None
+    payload = f"{content_hash}|v{version}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _is_metadata_up_to_date(
+    frontmatter_data: dict,
+    version: int,
+    expected_hash: str | None,
+) -> bool:
+    if frontmatter_data.get("totem_meta_version") != version:
+        return False
+    if not frontmatter_data.get("totem_signpost") or not frontmatter_data.get("totem_summary"):
+        return False
+    if expected_hash:
+        return frontmatter_data.get("totem_meta_hash") == expected_hash
+    return True
 
 
 def extract_transcript_text(body_text: str) -> str:

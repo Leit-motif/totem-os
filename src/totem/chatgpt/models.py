@@ -36,3 +36,4 @@ class ParsedConversations(BaseModel):
     total_count: int = 0
     parsed_count: int = 0
     errors: list[str] = Field(default_factory=list)
+

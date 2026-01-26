@@ -1,6 +1,6 @@
 # Totem OS Development Makefile
 
-.PHONY: help venv install test doctor-chatgpt ingest-chatgpt-dry clean dev-setup
+.PHONY: help venv install test ingest-chatgpt-local clean dev-setup
 
 # Default target
 help:
@@ -8,8 +8,7 @@ help:
 	@echo "  make venv           - Create Python virtual environment"
 	@echo "  make install        - Install Totem OS in editable mode"
 	@echo "  make test           - Run test suite"
-	@echo "  make doctor-chatgpt - Run ChatGPT integration diagnostics"
-	@echo "  make ingest-chatgpt-dry - Run ChatGPT ingestion in dry-run mode"
+	@echo "  make ingest-chatgpt-local - Ingest latest ChatGPT export from Downloads"
 	@echo "  make dev-setup      - Run complete development setup"
 	@echo "  make clean          - Remove virtual environment and cache files"
 
@@ -38,15 +37,10 @@ test: install
 	@echo "[INFO] Running test suite..."
 	@source .venv/bin/activate && python -m pytest tests/ -v
 
-# Run ChatGPT doctor
-doctor-chatgpt: install
-	@echo "[INFO] Running ChatGPT integration diagnostics..."
-	@source .venv/bin/activate && totem chatgpt doctor
-
-# Run ChatGPT ingestion dry-run
-ingest-chatgpt-dry: install
-	@echo "[INFO] Running ChatGPT ingestion in dry-run mode..."
-	@source .venv/bin/activate && totem chatgpt ingest-latest-export --dry-run
+# Run ChatGPT ingestion from downloads
+ingest-chatgpt-local: install
+	@echo "[INFO] Running ChatGPT ingestion from Downloads..."
+	@source .venv/bin/activate && totem chatgpt ingest-from-downloads
 
 # Complete development setup
 dev-setup:

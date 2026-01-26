@@ -26,7 +26,8 @@ class OmiClient:
         Raises:
             ValueError: If no API key is provided or found in environment
         """
-        self.api_key = api_key or os.getenv("OMI_API_KEY")
+        raw_key = api_key or os.getenv("OMI_API_KEY") or ""
+        self.api_key = raw_key.strip()
         if not self.api_key:
             raise ValueError(
                 "Omi API key not found. Set OMI_API_KEY environment variable "
