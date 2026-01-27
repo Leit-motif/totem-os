@@ -55,4 +55,6 @@ Thumbs.db
 # Vault
 totem_vault/
 
+# Totem repo-local config
+.totem/config.toml
 

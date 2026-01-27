@@ -1,0 +1,10 @@
+# Totem OS repository configuration (template)
+# Copy to .totem/config.toml and edit for your machine.
+
+# Optional: link a default vault for this repo
+vault_root = "/path/to/your/vault"
+
+# Optional: ChatGPT metadata provider defaults
+[chatgpt.summary]
+provider = "auto"
+model = ""
