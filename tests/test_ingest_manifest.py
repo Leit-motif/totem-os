@@ -165,7 +165,7 @@ def test_chatgpt_local_zip_idempotent(tmp_path, monkeypatch):
         chatgpt_export=ChatGptExportConfig(
             staging_dir="state/chatgpt_exports",
             obsidian_chatgpt_dir=str(obsidian_root / "chatgpt"),
-            tooling_chatgpt_dir="ChatGPT/Tooling",
+            tooling_chatgpt_dir="ChatGPT",
             obsidian_daily_dir=str(obsidian_root / "daily"),
             timezone="America/Chicago",
         ),

@@ -903,7 +903,7 @@ class TestLocalZipIngest:
         chatgpt_config = ChatGptExportConfig(
             staging_dir="state/chatgpt_exports",
             obsidian_chatgpt_dir=str(chatgpt_dir),
-            tooling_chatgpt_dir="ChatGPT/Tooling",
+            tooling_chatgpt_dir="ChatGPT",
             obsidian_daily_dir=str(daily_dir),
             timezone="America/Chicago",
         )

@@ -121,7 +121,7 @@ obsidian:
 
 chatgpt_export:
   obsidian_chatgpt_dir: "40_chatgpt/conversations"
-  tooling_chatgpt_dir: "ChatGPT/Tooling"
+  tooling_chatgpt_dir: "ChatGPT"
   routing:
     code_fence_min: 2
     code_ratio_min: 0.25

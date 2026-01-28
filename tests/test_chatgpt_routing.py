@@ -27,7 +27,7 @@ def _make_config(vault_root: Path, daemon_root: Path, tooling_root: Path) -> Tot
     chatgpt_config = ChatGptExportConfig(
         staging_dir="state/chatgpt_exports",
         obsidian_chatgpt_dir="40_chatgpt/conversations",
-        tooling_chatgpt_dir="ChatGPT/Tooling",
+        tooling_chatgpt_dir="ChatGPT",
         obsidian_daily_dir="40_chatgpt/daily",
         timezone="America/Chicago",
     )

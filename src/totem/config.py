@@ -227,7 +227,7 @@ class ChatGptExportConfig(BaseModel):
     state_file: str = Field(default="state/chatgpt_export_ingest_state.json")
     staging_dir: str = Field(default="state/chatgpt_exports")
     obsidian_chatgpt_dir: str = Field(default="40_chatgpt/conversations")
-    tooling_chatgpt_dir: str = Field(default="ChatGPT/Tooling")
+    tooling_chatgpt_dir: str = Field(default="ChatGPT")
     obsidian_daily_dir: str = Field(default="40_chatgpt/daily")
     timezone: str = Field(default="America/Chicago")
     summary: ChatGptSummaryConfig = Field(default_factory=ChatGptSummaryConfig)
@@ -310,7 +310,7 @@ class TotemConfig(BaseModel):
                 ),
                 tooling_chatgpt_dir=os.environ.get(
                     "TOTEM_CHATGPT_TOOLING_DIR",
-                    "ChatGPT/Tooling"
+                    "ChatGPT"
                 ),
                 obsidian_daily_dir=os.environ.get(
                     "TOTEM_CHATGPT_DAILY_DIR",
