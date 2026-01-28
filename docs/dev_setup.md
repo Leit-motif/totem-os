@@ -133,7 +133,9 @@ For ChatGPT ingestion:
 
 1. **Obsidian Vault:**
    - Create or use an existing Obsidian vault
-   - Update `obsidian_chatgpt_dir` and `obsidian_daily_dir` in your vault's `config.yaml`
+   - Update `obsidian.vaults.daemon_path` and `obsidian.vaults.tooling_path` in your vault's `config.yaml`
+   - Configure `chatgpt_export.obsidian_chatgpt_dir` (daemon) and `chatgpt_export.tooling_chatgpt_dir` (tooling)
+   - Optionally tune `chatgpt_export.routing.*` thresholds/keywords
 
 2. **Download Export ZIP:**
    - Download your ChatGPT export ZIP in the browser

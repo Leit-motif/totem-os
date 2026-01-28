@@ -202,6 +202,21 @@ class ChatGptSummaryConfig(BaseModel):
     backfill_sleep_ms: int = Field(default=0)
 
 
+class ChatGptRoutingConfig(BaseModel):
+    """Configuration for ChatGPT conversation routing heuristics."""
+
+    code_fence_min: int = Field(default=2)
+    code_ratio_min: float = Field(default=0.25)
+    keywords_any: list[str] = Field(default_factory=lambda: [
+        "python", "pip", "venv", "pytest", "conda", "import", "traceback", "exception",
+        "stack trace", "error", "bug", "sql", "regex", "typescript", "javascript",
+        "node", "npm", "yarn", "docker", "bash", "zsh", "powershell", "git", "merge",
+        "rebase", "fastapi", "langchain", "pydantic", "databricks", "api", "http",
+        "json", "yaml",
+    ])
+    enable_stacktrace_detection: bool = Field(default=True)
+
+
 class ChatGptExportConfig(BaseModel):
     """Configuration for ChatGPT export ingestion."""
 
@@ -212,9 +227,11 @@ class ChatGptExportConfig(BaseModel):
     state_file: str = Field(default="state/chatgpt_export_ingest_state.json")
     staging_dir: str = Field(default="state/chatgpt_exports")
     obsidian_chatgpt_dir: str = Field(default="40_chatgpt/conversations")
+    tooling_chatgpt_dir: str = Field(default="ChatGPT/Tooling")
     obsidian_daily_dir: str = Field(default="40_chatgpt/daily")
     timezone: str = Field(default="America/Chicago")
     summary: ChatGptSummaryConfig = Field(default_factory=ChatGptSummaryConfig)
+    routing: ChatGptRoutingConfig = Field(default_factory=ChatGptRoutingConfig)
 
 
 class LaunchdConfig(BaseModel):
@@ -222,6 +239,19 @@ class LaunchdConfig(BaseModel):
 
     label: str = Field(default="com.totem.chatgpt.export.ingest")
     interval_seconds: int = Field(default=21600)  # 6 hours
+
+
+class ObsidianVaultsConfig(BaseModel):
+    """Configuration for Obsidian vault roots."""
+
+    daemon_path: Optional[str] = Field(default=None)
+    tooling_path: Optional[str] = Field(default=None)
+
+
+class ObsidianConfig(BaseModel):
+    """Configuration for Obsidian integration."""
+
+    vaults: ObsidianVaultsConfig = Field(default_factory=ObsidianVaultsConfig)
 
 
 class TotemConfig(BaseModel):
@@ -238,6 +268,7 @@ class TotemConfig(BaseModel):
     # ChatGPT export ingestion
     chatgpt_export: ChatGptExportConfig = Field(default_factory=ChatGptExportConfig)
     launchd: LaunchdConfig = Field(default_factory=LaunchdConfig)
+    obsidian: ObsidianConfig = Field(default_factory=ObsidianConfig)
 
     model_config = {"frozen": False}
 
@@ -254,6 +285,8 @@ class TotemConfig(BaseModel):
         repo_config = _load_repo_config_data(_find_repo_root(Path.cwd()))
         repo_summary_provider = _get_repo_config_value(repo_config, ["chatgpt", "summary", "provider"])
         repo_summary_model = _get_repo_config_value(repo_config, ["chatgpt", "summary", "model"])
+        repo_daemon_vault = _get_repo_config_value(repo_config, ["obsidian", "vaults", "daemon_path"])
+        repo_tooling_vault = _get_repo_config_value(repo_config, ["obsidian", "vaults", "tooling_path"])
         summary_provider_env = os.environ.get("TOTEM_CHATGPT_SUMMARY_PROVIDER")
         summary_model_env = os.environ.get("TOTEM_CHATGPT_SUMMARY_MODEL")
 
@@ -274,6 +307,10 @@ class TotemConfig(BaseModel):
                 obsidian_chatgpt_dir=os.environ.get(
                     "TOTEM_CHATGPT_OBSIDIAN_DIR",
                     "40_chatgpt/conversations"
+                ),
+                tooling_chatgpt_dir=os.environ.get(
+                    "TOTEM_CHATGPT_TOOLING_DIR",
+                    "ChatGPT/Tooling"
                 ),
                 obsidian_daily_dir=os.environ.get(
                     "TOTEM_CHATGPT_DAILY_DIR",
@@ -301,10 +338,32 @@ class TotemConfig(BaseModel):
                     ),
                     backfill_sleep_ms=int(os.environ.get("TOTEM_CHATGPT_SUMMARY_BACKFILL_SLEEP_MS", "0")),
                 ),
+                routing=ChatGptRoutingConfig(
+                    code_fence_min=int(os.environ.get("TOTEM_CHATGPT_ROUTING_CODE_FENCE_MIN", "2")),
+                    code_ratio_min=float(os.environ.get("TOTEM_CHATGPT_ROUTING_CODE_RATIO_MIN", "0.25")),
+                    keywords_any=[
+                        keyword.strip().lower()
+                        for keyword in os.environ.get(
+                            "TOTEM_CHATGPT_ROUTING_KEYWORDS_ANY",
+                            ",".join(ChatGptRoutingConfig().keywords_any),
+                        ).split(",")
+                        if keyword.strip()
+                    ],
+                    enable_stacktrace_detection=_env_bool(
+                        "TOTEM_CHATGPT_ROUTING_ENABLE_STACKTRACE_DETECTION",
+                        True,
+                    ),
+                ),
             ),
             launchd=LaunchdConfig(
                 label=os.environ.get("TOTEM_LAUNCHD_LABEL", "com.totem.chatgpt.export.ingest"),
                 interval_seconds=int(os.environ.get("TOTEM_LAUNCHD_INTERVAL", "21600")),
+            ),
+            obsidian=ObsidianConfig(
+                vaults=ObsidianVaultsConfig(
+                    daemon_path=os.environ.get("TOTEM_OBSIDIAN_DAEMON_VAULT") or repo_daemon_vault,
+                    tooling_path=os.environ.get("TOTEM_OBSIDIAN_TOOLING_VAULT") or repo_tooling_vault,
+                ),
             ),
         )
 
@@ -327,8 +386,14 @@ chatgpt_export:
   state_file: '{self.chatgpt_export.state_file}'
   staging_dir: '{self.chatgpt_export.staging_dir}'
   obsidian_chatgpt_dir: '{self.chatgpt_export.obsidian_chatgpt_dir}'
+  tooling_chatgpt_dir: '{self.chatgpt_export.tooling_chatgpt_dir}'
   obsidian_daily_dir: '{self.chatgpt_export.obsidian_daily_dir}'
   timezone: '{self.chatgpt_export.timezone}'
+  routing:
+    code_fence_min: {self.chatgpt_export.routing.code_fence_min}
+    code_ratio_min: {self.chatgpt_export.routing.code_ratio_min}
+    keywords_any: {self.chatgpt_export.routing.keywords_any}
+    enable_stacktrace_detection: {self.chatgpt_export.routing.enable_stacktrace_detection}
   summary:
     enabled: {self.chatgpt_export.summary.enabled}
     provider: '{self.chatgpt_export.summary.provider}'
@@ -347,4 +412,10 @@ chatgpt_export:
 launchd:
   label: '{self.launchd.label}'
   interval_seconds: {self.launchd.interval_seconds}
+
+# Obsidian configuration
+obsidian:
+  vaults:
+    daemon_path: '{self.obsidian.vaults.daemon_path or ""}'
+    tooling_path: '{self.obsidian.vaults.tooling_path or ""}'
 """

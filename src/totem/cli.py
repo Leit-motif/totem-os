@@ -5,6 +5,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 import typer
 from rich.console import Console
@@ -361,6 +362,26 @@ def ingest(
         "--dry-run",
         help="ChatGPT: preview mode without writing files",
     ),
+    daemon_vault: Optional[str] = typer.Option(
+        None,
+        "--daemon-vault",
+        help="ChatGPT: override daemon Obsidian vault path",
+    ),
+    tooling_vault: Optional[str] = typer.Option(
+        None,
+        "--tooling-vault",
+        help="ChatGPT: override tooling Obsidian vault path",
+    ),
+    routing_mode: str = typer.Option(
+        "heuristic",
+        "--routing-mode",
+        help="ChatGPT: routing mode {heuristic,force-daemon,force-tooling}",
+    ),
+    reclassify: bool = typer.Option(
+        False,
+        "--reclassify",
+        help="ChatGPT: recompute routing even if stored in state",
+    ),
 ):
     """Ingest from Omi and/or ChatGPT with manifest recording."""
     if all_sources and source:
@@ -470,6 +491,10 @@ def ingest(
                 downloads_dir=Path.home() / "Downloads",
                 limit=50,
                 progress_callback=_progress,
+                routing_mode=routing_mode,
+                daemon_vault_override=Path(daemon_vault) if daemon_vault else None,
+                tooling_vault_override=Path(tooling_vault) if tooling_vault else None,
+                reclassify=reclassify,
             )
         except LocalIngestError as e:
             console.print(f"[red]ChatGPT ingest failed:[/red] {e}")
@@ -686,6 +711,26 @@ def omi_sync(
 @chatgpt_app.command("ingest-from-zip")
 def chatgpt_ingest_from_zip(
     zip_path: str = typer.Argument(..., help="Path to a local ChatGPT export ZIP file"),
+    daemon_vault: Optional[str] = typer.Option(
+        None,
+        "--daemon-vault",
+        help="Override daemon Obsidian vault path",
+    ),
+    tooling_vault: Optional[str] = typer.Option(
+        None,
+        "--tooling-vault",
+        help="Override tooling Obsidian vault path",
+    ),
+    routing_mode: str = typer.Option(
+        "heuristic",
+        "--routing-mode",
+        help="Routing mode {heuristic,force-daemon,force-tooling}",
+    ),
+    reclassify: bool = typer.Option(
+        False,
+        "--reclassify",
+        help="Recompute routing even if stored in state",
+    ),
 ):
     """Ingest a local ChatGPT export ZIP file."""
     # Get global vault path
@@ -707,6 +752,10 @@ def chatgpt_ingest_from_zip(
             vault_paths=paths,
             ledger_writer=ledger_writer,
             zip_path=Path(zip_path),
+            routing_mode=routing_mode,
+            daemon_vault_override=Path(daemon_vault) if daemon_vault else None,
+            tooling_vault_override=Path(tooling_vault) if tooling_vault else None,
+            reclassify=reclassify,
         )
 
         from . import __version__
@@ -764,6 +813,26 @@ def chatgpt_ingest_from_downloads(
         "--limit",
         help="Maximum number of recent ZIP files to scan",
     ),
+    daemon_vault: Optional[str] = typer.Option(
+        None,
+        "--daemon-vault",
+        help="Override daemon Obsidian vault path",
+    ),
+    tooling_vault: Optional[str] = typer.Option(
+        None,
+        "--tooling-vault",
+        help="Override tooling Obsidian vault path",
+    ),
+    routing_mode: str = typer.Option(
+        "heuristic",
+        "--routing-mode",
+        help="Routing mode {heuristic,force-daemon,force-tooling}",
+    ),
+    reclassify: bool = typer.Option(
+        False,
+        "--reclassify",
+        help="Recompute routing even if stored in state",
+    ),
 ):
     """Find the newest ChatGPT export ZIP in downloads and ingest it."""
     # Get global vault path
@@ -790,6 +859,10 @@ def chatgpt_ingest_from_downloads(
             downloads_dir=Path(downloads_dir),
             limit=limit,
             progress_callback=_progress,
+            routing_mode=routing_mode,
+            daemon_vault_override=Path(daemon_vault) if daemon_vault else None,
+            tooling_vault_override=Path(tooling_vault) if tooling_vault else None,
+            reclassify=reclassify,
         )
 
         if not summary:

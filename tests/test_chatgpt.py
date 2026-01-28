@@ -24,7 +24,13 @@ from totem.config import resolve_vault_root
 from totem.ledger import LedgerWriter
 from totem.paths import VaultPaths
 from totem.models.ledger import LedgerEvent
-from totem.config import ChatGptExportConfig, ChatGptSummaryConfig, TotemConfig
+from totem.config import (
+    ChatGptExportConfig,
+    ChatGptSummaryConfig,
+    ObsidianConfig,
+    ObsidianVaultsConfig,
+    TotemConfig,
+)
 
 
 class TestConversationParser:
@@ -897,10 +903,20 @@ class TestLocalZipIngest:
         chatgpt_config = ChatGptExportConfig(
             staging_dir="state/chatgpt_exports",
             obsidian_chatgpt_dir=str(chatgpt_dir),
+            tooling_chatgpt_dir="ChatGPT/Tooling",
             obsidian_daily_dir=str(daily_dir),
             timezone="America/Chicago",
         )
-        return TotemConfig(vault_path=vault_root, chatgpt_export=chatgpt_config)
+        return TotemConfig(
+            vault_path=vault_root,
+            chatgpt_export=chatgpt_config,
+            obsidian=ObsidianConfig(
+                vaults=ObsidianVaultsConfig(
+                    daemon_path=str(obsidian_root),
+                    tooling_path=str(obsidian_root / "tooling"),
+                ),
+            ),
+        )
 
     def test_ingest_from_zip_success(self, tmp_path, monkeypatch):
         vault_root = tmp_path / "vault"

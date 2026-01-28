@@ -2,7 +2,6 @@
 
 import logging
 import json
-import os
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -16,6 +15,13 @@ from .conversation_parser import parse_conversations_json
 from .daily_note import write_daily_note_chatgpt_block
 from .metadata import ensure_conversation_metadata
 from .obsidian_writer import write_conversation_note
+from .router import classify_conversation
+from .state import (
+    get_conversation_state,
+    load_ingest_state,
+    save_ingest_state,
+    set_conversation_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +121,11 @@ def ingest_from_zip_with_summary(
     ledger_writer: LedgerWriter,
     zip_path: Path,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    *,
+    routing_mode: str = "heuristic",
+    daemon_vault_override: Optional[Path] = None,
+    tooling_vault_override: Optional[Path] = None,
+    reclassify: bool = False,
 ) -> LocalZipIngestSummary:
     """Ingest a local ChatGPT export ZIP file and return a summary."""
     if not zip_path.exists():
@@ -168,11 +179,22 @@ def ingest_from_zip_with_summary(
                 f"Failed to parse conversations from JSON (errors: {parsed_result.errors})"
             )
 
-        obsidian_chatgpt_dir = vault_paths.root / config.chatgpt_export.obsidian_chatgpt_dir
-        obsidian_chatgpt_dir.mkdir(parents=True, exist_ok=True)
-        obsidian_vault = Path(os.getenv("TOTEM_VAULT_PATH", "/Users/amrit/My Obsidian Vault"))
+        daemon_vault_root, tooling_vault_root, tooling_fallback = _resolve_obsidian_vaults(
+            config,
+            vault_paths,
+            daemon_vault_override,
+            tooling_vault_override,
+        )
+        daemon_chatgpt_dir = daemon_vault_root / config.chatgpt_export.obsidian_chatgpt_dir
+        daemon_chatgpt_dir.mkdir(parents=True, exist_ok=True)
+        tooling_chatgpt_dir = tooling_vault_root / config.chatgpt_export.tooling_chatgpt_dir
+        tooling_chatgpt_dir.mkdir(parents=True, exist_ok=True)
+        obsidian_vault = daemon_vault_root
+        state_path = vault_paths.root / config.chatgpt_export.state_file
+        ingest_state = load_ingest_state(state_path)
         written_notes = []
         conversation_note_paths = {}
+        daemon_conversations = []
         processed = 0
         last_item_ts = None
         last_conv_id = None
@@ -189,6 +211,31 @@ def ingest_from_zip_with_summary(
             status="running",
         )
         for conv in parsed_result.conversations:
+            stored_state = get_conversation_state(ingest_state, conv.conversation_id)
+            if stored_state and not reclassify:
+                destination_vault = stored_state.destination_vault
+            else:
+                decision = classify_conversation(
+                    conv,
+                    routing_config=config.chatgpt_export.routing,
+                    routing_mode=routing_mode,
+                )
+                destination_vault = decision.destination
+
+            if destination_vault == "tooling" and tooling_fallback:
+                logger.warning(
+                    "Tooling vault path missing; routing to daemon vault for conversation "
+                    f"{conv.conversation_id}"
+                )
+                destination_vault = "daemon"
+
+            if destination_vault == "tooling":
+                obsidian_chatgpt_dir = tooling_chatgpt_dir
+                vault_root = tooling_vault_root
+            else:
+                obsidian_chatgpt_dir = daemon_chatgpt_dir
+                vault_root = daemon_vault_root
+
             note_path = write_conversation_note(
                 conv,
                 obsidian_chatgpt_dir,
@@ -197,12 +244,22 @@ def ingest_from_zip_with_summary(
                 run_date_str=run_date_str,
             )
             written_notes.append(note_path)
-            conversation_note_paths[conv.conversation_id] = note_path
+            if destination_vault == "daemon":
+                conversation_note_paths[conv.conversation_id] = note_path
+                daemon_conversations.append(conv)
             ensure_conversation_metadata(
                 note_path=note_path,
                 summary_config=config.chatgpt_export.summary,
                 ledger_writer=ledger_writer,
             )
+            relpath = _safe_relpath(note_path, vault_root)
+            set_conversation_state(
+                ingest_state,
+                conv.conversation_id,
+                destination_vault,
+                relpath,
+            )
+            save_ingest_state(state_path, ingest_state)
             ts = conv.updated_at or conv.created_at
             if ts:
                 ts_str = ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -225,11 +282,11 @@ def ingest_from_zip_with_summary(
                 if progress_callback:
                     progress_callback(processed, total_conversations, conv.conversation_id)
 
-        enable_daily_notes = True
+        enable_daily_notes = bool(daemon_conversations)
         daily_result = None
         if enable_daily_notes:
             daily_result = write_daily_note_chatgpt_block(
-                parsed_result.conversations,
+                daemon_conversations,
                 run_date_str,
                 obsidian_vault,
                 ledger_writer,
@@ -285,9 +342,23 @@ def ingest_from_zip(
     vault_paths: VaultPaths,
     ledger_writer: LedgerWriter,
     zip_path: Path,
+    *,
+    routing_mode: str = "heuristic",
+    daemon_vault_override: Optional[Path] = None,
+    tooling_vault_override: Optional[Path] = None,
+    reclassify: bool = False,
 ) -> bool:
     """Ingest a local ChatGPT export ZIP file."""
-    ingest_from_zip_with_summary(config, vault_paths, ledger_writer, zip_path)
+    ingest_from_zip_with_summary(
+        config,
+        vault_paths,
+        ledger_writer,
+        zip_path,
+        routing_mode=routing_mode,
+        daemon_vault_override=daemon_vault_override,
+        tooling_vault_override=tooling_vault_override,
+        reclassify=reclassify,
+    )
     return True
 
 
@@ -298,6 +369,11 @@ def ingest_from_downloads_with_summary(
     downloads_dir: Path,
     limit: int = 50,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    *,
+    routing_mode: str = "heuristic",
+    daemon_vault_override: Optional[Path] = None,
+    tooling_vault_override: Optional[Path] = None,
+    reclassify: bool = False,
 ) -> Optional[LocalZipIngestSummary]:
     """Find the newest valid export ZIP in downloads and ingest it."""
     if not downloads_dir.exists():
@@ -333,6 +409,10 @@ def ingest_from_downloads_with_summary(
         ledger_writer,
         selected_zip,
         progress_callback=progress_callback,
+        routing_mode=routing_mode,
+        daemon_vault_override=daemon_vault_override,
+        tooling_vault_override=tooling_vault_override,
+        reclassify=reclassify,
     )
 
 
@@ -342,6 +422,11 @@ def ingest_from_downloads(
     ledger_writer: LedgerWriter,
     downloads_dir: Path,
     limit: int = 50,
+    *,
+    routing_mode: str = "heuristic",
+    daemon_vault_override: Optional[Path] = None,
+    tooling_vault_override: Optional[Path] = None,
+    reclassify: bool = False,
 ) -> bool:
     """Find the newest valid export ZIP in downloads and ingest it."""
     result = ingest_from_downloads_with_summary(
@@ -350,5 +435,58 @@ def ingest_from_downloads(
         ledger_writer=ledger_writer,
         downloads_dir=downloads_dir,
         limit=limit,
+        routing_mode=routing_mode,
+        daemon_vault_override=daemon_vault_override,
+        tooling_vault_override=tooling_vault_override,
+        reclassify=reclassify,
     )
     return result is not None
+
+
+def _resolve_obsidian_vaults(
+    config: TotemConfig,
+    vault_paths: VaultPaths,
+    daemon_vault_override: Optional[Path],
+    tooling_vault_override: Optional[Path],
+) -> tuple[Path, Path, bool]:
+    daemon_vault_root = _resolve_obsidian_vault(
+        config,
+        vault_paths,
+        daemon_vault_override,
+        kind="daemon",
+    )
+    tooling_vault_root = _resolve_obsidian_vault(
+        config,
+        vault_paths,
+        tooling_vault_override,
+        kind="tooling",
+    )
+    tooling_fallback = tooling_vault_root is None
+    if tooling_vault_root is None:
+        tooling_vault_root = daemon_vault_root
+    return daemon_vault_root, tooling_vault_root, tooling_fallback
+
+
+def _resolve_obsidian_vault(
+    config: TotemConfig,
+    vault_paths: VaultPaths,
+    override: Optional[Path],
+    *,
+    kind: str,
+) -> Optional[Path]:
+    if override:
+        return override
+    vaults = config.obsidian.vaults
+    path_str = vaults.daemon_path if kind == "daemon" else vaults.tooling_path
+    if path_str:
+        return Path(path_str)
+    if kind == "daemon":
+        return vault_paths.root
+    return None
+
+
+def _safe_relpath(note_path: Path, vault_root: Path) -> str:
+    try:
+        return str(note_path.relative_to(vault_root))
+    except ValueError:
+        return str(note_path)

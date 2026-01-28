@@ -110,6 +110,25 @@ totem ingest-report
 - Omi full-history runs resume from the last successful timestamp in the manifest.
 - ChatGPT runs use local ZIP ingestion from Downloads; idempotency is ensured by content hashes and stable filenames.
 
+### ChatGPT Vault Routing
+ChatGPT conversations are routed into daemon vs tooling vaults at ingest time using deterministic heuristics.
+Configure the vault roots and routing thresholds in your vault config:
+```
+obsidian:
+  vaults:
+    daemon_path: "/path/to/Daemon"
+    tooling_path: "/path/to/Tooling"
+
+chatgpt_export:
+  obsidian_chatgpt_dir: "40_chatgpt/conversations"
+  tooling_chatgpt_dir: "ChatGPT/Tooling"
+  routing:
+    code_fence_min: 2
+    code_ratio_min: 0.25
+    keywords_any: ["python", "docker", "traceback"]
+    enable_stacktrace_detection: true
+```
+
 ### Idempotency validation
 Run ingestion twice and compare outputs:
 ```

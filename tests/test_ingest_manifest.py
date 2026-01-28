@@ -20,7 +20,12 @@ from totem.omi.ingest import OmiIngestCrash, sync_omi_transcripts
 from totem.models.omi import OmiConversation, OmiTranscriptSegment
 from totem.ledger import LedgerWriter
 from totem.paths import VaultPaths
-from totem.config import TotemConfig, ChatGptExportConfig
+from totem.config import (
+    TotemConfig,
+    ChatGptExportConfig,
+    ObsidianConfig,
+    ObsidianVaultsConfig,
+)
 from totem.chatgpt.local_ingest import ingest_from_zip_with_summary
 
 
@@ -160,8 +165,15 @@ def test_chatgpt_local_zip_idempotent(tmp_path, monkeypatch):
         chatgpt_export=ChatGptExportConfig(
             staging_dir="state/chatgpt_exports",
             obsidian_chatgpt_dir=str(obsidian_root / "chatgpt"),
+            tooling_chatgpt_dir="ChatGPT/Tooling",
             obsidian_daily_dir=str(obsidian_root / "daily"),
             timezone="America/Chicago",
+        ),
+        obsidian=ObsidianConfig(
+            vaults=ObsidianVaultsConfig(
+                daemon_path=str(obsidian_root),
+                tooling_path=str(obsidian_root / "tooling"),
+            ),
         ),
     )
     paths = VaultPaths.from_config(config)
