@@ -351,6 +351,11 @@ def ingest(
         "-d",
         help="Date for Omi ingestion (YYYY-MM-DD, default: today)",
     ),
+    include_action_items: bool = typer.Option(
+        False,
+        "--include-action-items/--no-include-action-items",
+        help="Omi: include action items in daily note block (default: False)",
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -404,6 +409,7 @@ def ingest(
                 date=date,
                 sync_all=full_history,
                 write_daily_note=True,
+                include_action_items=include_action_items,
                 obsidian_vault=Path(os.getenv("TOTEM_VAULT_PATH", "/Users/amrit/My Obsidian Vault")),
                 ledger_writer=ledger_writer,
                 vault_paths=paths,
@@ -581,6 +587,11 @@ def omi_sync(
         "--write-daily-note/--no-write-daily-note",
         help="Write summary block to Obsidian daily note (default: True)",
     ),
+    include_action_items: bool = typer.Option(
+        False,
+        "--include-action-items/--no-include-action-items",
+        help="Include action items in daily note block (default: False)",
+    ),
 ):
     """Sync Omi transcripts to Obsidian vault.
 
@@ -620,6 +631,7 @@ def omi_sync(
             date=date,
             sync_all=sync_all,
             write_daily_note=write_daily_note,
+            include_action_items=include_action_items,
             obsidian_vault=obsidian_vault,
             ledger_writer=ledger_writer,
             vault_paths=paths,

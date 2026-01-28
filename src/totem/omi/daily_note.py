@@ -29,6 +29,7 @@ def write_daily_note_omi_block(
     date_str: str,
     vault_root: Path,
     ledger_writer: LedgerWriter,
+    include_action_items: bool = False,
 ) -> DailyNoteResult:
     """Write or update Omi block in daily note with idempotency.
     
@@ -44,6 +45,7 @@ def write_daily_note_omi_block(
         date_str: Date string (YYYY-MM-DD)
         vault_root: Root path of Obsidian vault
         ledger_writer: Ledger writer for events
+        include_action_items: Whether to include Omi action items in the block
         
     Returns:
         DailyNoteResult with statistics
@@ -73,7 +75,7 @@ def write_daily_note_omi_block(
     for conv in sorted_conversations:
         if conv.overview:
             all_overviews.append(conv.overview)
-        if conv.action_items:
+        if include_action_items and conv.action_items:
             # Sanitize items
             clean_items = [_sanitize_action_item(item) for item in conv.action_items]
             all_action_items.extend(clean_items)
@@ -83,13 +85,13 @@ def write_daily_note_omi_block(
             locations.append(conv.location)
     
     # Dedup action items (while preserving order)
-    unique_action_items = list(dict.fromkeys(all_action_items))
+    unique_action_items = list(dict.fromkeys(all_action_items)) if include_action_items else []
     
     # Build Omi block content
     block_lines = ["<!-- TOTEM:OMI:START -->", "## Omi", ""]
     
     # Add action items section if present (First)
-    if unique_action_items:
+    if include_action_items and unique_action_items:
         block_lines.append("### Omi Action Items (auto)")
         for item in unique_action_items:
             block_lines.append(f"- [ ] {item}")

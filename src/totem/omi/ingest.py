@@ -49,6 +49,7 @@ def sync_omi_transcripts(
     date: Optional[str],
     sync_all: bool,
     write_daily_note: bool,
+    include_action_items: bool = False,
     obsidian_vault: Path,
     ledger_writer: LedgerWriter,
     vault_paths: VaultPaths,
@@ -61,6 +62,7 @@ def sync_omi_transcripts(
         date: YYYY-MM-DD (ignored if sync_all)
         sync_all: Sync entire history
         write_daily_note: Write daily note block
+        include_action_items: Include action items in daily note block
         obsidian_vault: Obsidian vault root
         ledger_writer: Ledger writer
         vault_paths: Totem vault paths
@@ -184,6 +186,7 @@ def sync_omi_transcripts(
                     date_str=d_str,
                     vault_root=obsidian_vault,
                     ledger_writer=ledger_writer,
+                    include_action_items=include_action_items,
                 )
             except Exception as e:
                 errors.append({"item_id": d_str, "error": str(e)})
@@ -216,6 +219,7 @@ def sync_omi_transcripts(
             "limit": 100,
             "sync_all": sync_all,
             "write_daily_note": write_daily_note,
+            "include_action_items": include_action_items,
         },
         conversation_ids=[conv.id for conv in conversations],
         daily_note_written=write_daily_note and days_processed > 0,

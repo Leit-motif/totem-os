@@ -86,6 +86,7 @@ def test_write_daily_note_content_format(tmp_path, vault_paths, sample_conversat
         date_str="2026-01-19",
         vault_root=obsidian_vault,
         ledger_writer=ledger_writer,
+        include_action_items=True,
     )
     
     path = obsidian_vault / "5.0 Journal" / "5.1 Daily" / "2026" / "01" / "2026-01-19.md"
@@ -133,6 +134,7 @@ def test_write_daily_note_idempotency(tmp_path, vault_paths, sample_conversation
         date_str="2026-01-19",
         vault_root=obsidian_vault,
         ledger_writer=ledger_writer,
+        include_action_items=True,
     )
     
     # Modify existing content to simulate user edits outside block
@@ -149,6 +151,7 @@ def test_write_daily_note_idempotency(tmp_path, vault_paths, sample_conversation
         date_str="2026-01-19",
         vault_root=obsidian_vault,
         ledger_writer=ledger_writer,
+        include_action_items=True,
     )
     
     content = path.read_text(encoding="utf-8")
@@ -179,6 +182,7 @@ def test_write_daily_note_handles_missing_files(tmp_path, vault_paths, sample_co
         date_str="2026-01-19",
         vault_root=obsidian_vault,
         ledger_writer=ledger_writer,
+        include_action_items=True,
     )
     
     assert daily_dir.exists()
@@ -203,6 +207,7 @@ def test_daily_note_missing_metadata(tmp_path, vault_paths):
         date_str="2026-01-19",
         vault_root=obsidian_vault,
         ledger_writer=ledger_writer,
+        include_action_items=True,
     )
     
     path = obsidian_vault / "5.0 Journal" / "5.1 Daily" / "2026" / "01" / "2026-01-19.md"
@@ -264,6 +269,7 @@ def test_write_daily_note_sanitization(tmp_path, vault_paths):
         date_str="2026-01-19",
         vault_root=obsidian_vault,
         ledger_writer=ledger_writer,
+        include_action_items=True,
     )
     
     path = obsidian_vault / "5.0 Journal" / "5.1 Daily" / "2026" / "01" / "2026-01-19.md"
@@ -289,6 +295,7 @@ def test_user_edit_overwrite(tmp_path, vault_paths, sample_conversations_with_me
         date_str="2026-01-19",
         vault_root=obsidian_vault,
         ledger_writer=ledger_writer,
+        include_action_items=True,
     )
     
     path = obsidian_vault / "5.0 Journal" / "5.1 Daily" / "2026" / "01" / "2026-01-19.md"
@@ -304,6 +311,7 @@ def test_user_edit_overwrite(tmp_path, vault_paths, sample_conversations_with_me
         date_str="2026-01-19",
         vault_root=obsidian_vault,
         ledger_writer=ledger_writer,
+        include_action_items=True,
     )
     
     new_content = path.read_text(encoding="utf-8")
@@ -370,6 +378,7 @@ def test_ledger_event_emitted(tmp_path, vault_paths, sample_conversations_with_m
         date_str="2026-01-19",
         vault_root=obsidian_vault,
         ledger_writer=ledger_writer,
+        include_action_items=True,
     )
     
     # Read ledger
