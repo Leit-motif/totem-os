@@ -69,7 +69,7 @@ Ledger subcommands:
 - `totem ledger tail [--n N] [--full]`: show recent ledger events.
 
 Omi subcommands:
-- `totem omi sync [--date YYYY-MM-DD | --all] [--no-write-daily-note]`: sync Omi transcripts.
+- `totem omi sync [--date YYYY-MM-DD | --all] [--no-write-daily-note] [--include-action-items]`: sync Omi transcripts (action items are opt-in).
 
 ChatGPT export subcommands (local ZIP only; Gmail flow removed):
 - `totem chatgpt ingest-from-zip /path/to/export.zip`: ingest a local export zip.
@@ -96,6 +96,7 @@ totem ingest --source omi --full-history
 totem ingest --source chatgpt --full-history
 totem ingest --all --full-history
 ```
+Use `--include-action-items` to opt into Omi action items in the daily note block.
 
 For ChatGPT, full-history ingestion reads the most recent local export ZIP from
 `~/Downloads` (use `totem chatgpt ingest-from-zip` for an explicit file).
