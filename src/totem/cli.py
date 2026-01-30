@@ -55,9 +55,8 @@ _global_vault_path = None
 
 def set_global_vault_path(vault_path: str = typer.Option(
     None,
-    "--vault",
-    "-v",
-    help="Path to vault directory (default: auto-resolve from current directory or repo config)",
+    "--totem-vault",
+    help="Path to Totem vault directory (default: auto-resolve from current directory or repo config)",
 )):
     """Global vault path option callback."""
     global _global_vault_path
@@ -77,6 +76,9 @@ app = typer.Typer(
 
 
 console = Console()
+
+daemon_app = typer.Typer(help="Daemon vault commands", add_completion=False)
+app.add_typer(daemon_app, name="daemon")
 
 def _parse_iso_ts(ts: str) -> datetime:
     """Parse ISO timestamp with optional Z suffix."""
@@ -1714,6 +1716,38 @@ def version():
     """Show Totem OS version."""
     from . import __version__
     console.print(f"Totem OS v{__version__}")
+
+
+@daemon_app.command("index")
+def daemon_index(
+    vault: Optional[str] = typer.Option(
+        None,
+        "--vault",
+        help="Path to daemon Obsidian vault root (overrides .totem/config.toml [obsidian.vaults].daemon_path)",
+    ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help="Drop and recreate schema, then reindex all markdown files",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="SQLite DB path (relative to daemon vault unless absolute; overrides [daemon].daemon_index_sqlite)",
+    ),
+):
+    """Index the daemon Obsidian vault (index-only)."""
+    from .daemon_index.config import load_daemon_index_config
+    from .daemon_index.indexer import index_daemon_vault
+
+    try:
+        cfg = load_daemon_index_config(cli_vault=vault, cli_db_path=db_path)
+    except (FileNotFoundError, ValueError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+    summary = index_daemon_vault(cfg, full=full)
+    console.print(f"scanned={summary.scanned} updated={summary.updated} unchanged={summary.unchanged} deleted={summary.deleted}")
 
 
 def main():

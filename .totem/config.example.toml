@@ -4,6 +4,19 @@
 # Optional: link a default vault for this repo
 vault_root = "/path/to/your/vault"
 
+# Optional: link Obsidian vaults (daemon required for `totem daemon index`)
+[obsidian.vaults]
+daemon_path = "/path/to/Daemon"
+tooling_path = "/path/to/Tooling"
+
+# Daemon vault indexing (Phase 2 / Milestone 1: index-only)
+[daemon]
+# Relative paths resolve against the daemon vault root.
+daemon_index_sqlite = "state/daemon_index.sqlite"
+exclude_globs = ["state/**", ".git/**"]
+frontmatter_journal_date_key = "date"
+frontmatter_journal_date_formats = ["%Y-%m-%d", "%m-%d-%Y"]
+
 # Optional: ChatGPT metadata provider defaults
 [chatgpt.summary]
 provider = "auto"
