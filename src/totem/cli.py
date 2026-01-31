@@ -1749,6 +1749,53 @@ def daemon_index(
     summary = index_daemon_vault(cfg, full=full)
     console.print(f"scanned={summary.scanned} updated={summary.updated} unchanged={summary.unchanged} deleted={summary.deleted}")
 
+@daemon_app.command("embed")
+def daemon_embed(
+    vault: Optional[str] = typer.Option(
+        None,
+        "--vault",
+        help="Path to daemon Obsidian vault root (overrides .totem/config.toml [obsidian.vaults].daemon_path)",
+    ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help="Recompute chunks for all files (non-destructive to chunk_embeddings table)",
+    ),
+    limit: Optional[int] = typer.Option(
+        None,
+        "--limit",
+        help="Maximum number of missing chunk embeddings to compute this run",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="SQLite DB path (relative to daemon vault unless absolute; overrides [daemon].daemon_index_sqlite)",
+    ),
+):
+    """Compute chunks + embeddings for the daemon vault (no retrieval yet)."""
+    from .daemon_embed.config import load_daemon_embed_config
+    from .daemon_embed.orchestrator import embed_daemon_vault
+
+    try:
+        cfg = load_daemon_embed_config(cli_vault=vault, cli_db_path=db_path)
+    except (FileNotFoundError, ValueError, RuntimeError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+    summary = embed_daemon_vault(cfg, full=full, limit=limit)
+    console.print(
+        "files_considered={files_considered} files_rechunked={files_rechunked} "
+        "chunks_upserted={chunks_upserted} chunks_embedded={chunks_embedded} "
+        "files_embedded={files_embedded} dangling_embeddings_deleted={dangling_embeddings_deleted}".format(
+            files_considered=summary.files_considered,
+            files_rechunked=summary.files_rechunked,
+            chunks_upserted=summary.chunks_upserted,
+            chunks_embedded=summary.chunks_embedded,
+            files_embedded=summary.files_embedded,
+            dangling_embeddings_deleted=summary.dangling_embeddings_deleted,
+        )
+    )
+
 
 def main():
     """Entry point for the CLI."""

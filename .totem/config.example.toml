@@ -17,6 +17,15 @@ exclude_globs = ["state/**", ".git/**"]
 frontmatter_journal_date_key = "date"
 frontmatter_journal_date_formats = ["%Y-%m-%d", "%m-%d-%Y"]
 
+# Phase 2 / Milestone 2: chunking + embeddings (no retrieval yet)
+chunks_min_bytes = 400
+chunks_max_bytes = 4000
+chunks_split_strategy = "paragraph_then_window"
+chunks_include_preamble = false
+embeddings_backend = "sqlite"
+embeddings_model = "dummy-sha256"
+embeddings_dim = 96
+
 # Optional: ChatGPT metadata provider defaults
 [chatgpt.summary]
 provider = "auto"
