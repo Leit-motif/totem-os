@@ -146,6 +146,17 @@ def embed_daemon_vault(
                     chunks_upserted += len(planned)
                     files_rechunked += 1
 
+        # If limit=0, caller wants deterministic chunking only.
+        if limit is not None and int(limit) <= 0:
+            return DaemonEmbedSummary(
+                files_considered=files_considered,
+                files_rechunked=files_rechunked,
+                chunks_upserted=chunks_upserted,
+                chunks_embedded=0,
+                files_embedded=0,
+                dangling_embeddings_deleted=0,
+            )
+
         # Determine missing embeddings, deterministic order: rel_path ASC, chunk.ord ASC.
         rows = conn.execute(
             """

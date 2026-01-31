@@ -1796,6 +1796,113 @@ def daemon_embed(
         )
     )
 
+@daemon_app.command("fts-rebuild")
+def daemon_fts_rebuild(
+    vault: Optional[str] = typer.Option(
+        None,
+        "--vault",
+        help="Path to daemon Obsidian vault root (overrides .totem/config.toml [obsidian.vaults].daemon_path)",
+    ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help="Rebuild FTS index from scratch",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="SQLite DB path (relative to daemon vault unless absolute; overrides [daemon].daemon_index_sqlite)",
+    ),
+):
+    """Rebuild/update the chunk FTS5 index from existing chunks."""
+    from .daemon_search.config import load_daemon_search_config
+    from .daemon_search.db import connect
+    from .daemon_search.fts import rebuild_chunk_fts
+
+    try:
+        cfg = load_daemon_search_config(cli_vault=vault, cli_db_path=db_path)
+    except (FileNotFoundError, ValueError, RuntimeError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+    conn = connect(cfg.db_path)
+    try:
+        stats = rebuild_chunk_fts(conn, vault_root=cfg.vault_root, full=full)
+    finally:
+        conn.close()
+
+    console.print(f"inserted={stats['inserted']} updated={stats['updated']} skipped={stats['skipped']}")
+
+
+@daemon_app.command("search")
+def daemon_search(
+    query: str = typer.Argument(..., help="Search query"),
+    top_k: Optional[int] = typer.Option(None, "--top-k", help="Number of primary results to return"),
+    tag: Optional[list[str]] = typer.Option(None, "--tag", help="Filter by tag (repeatable)"),
+    tag_or: bool = typer.Option(False, "--tag-or", help="If set, tags are ORed (default AND)"),
+    date_from: Optional[str] = typer.Option(None, "--date-from", help="Filter: effective date >= YYYY-MM-DD"),
+    date_to: Optional[str] = typer.Option(None, "--date-to", help="Filter: effective date <= YYYY-MM-DD"),
+    prefer_recent: bool = typer.Option(False, "--prefer-recent", help="Apply deterministic recency boost"),
+    expand_links: Optional[int] = typer.Option(
+        None,
+        "--expand-links",
+        help="0 disables; >0 appends up to N (capped) 1-hop neighbors after primary hits",
+    ),
+    vault: Optional[str] = typer.Option(
+        None,
+        "--vault",
+        help="Path to daemon Obsidian vault root (overrides .totem/config.toml [obsidian.vaults].daemon_path)",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="SQLite DB path (relative to daemon vault unless absolute; overrides [daemon].daemon_index_sqlite)",
+    ),
+):
+    """Hybrid daemon search (FTS5 + vectors), returns bounded excerpts only."""
+    from .daemon_search.config import load_daemon_search_config
+    from .daemon_search.engine import search_daemon
+    from .daemon_search.models import SearchFilters
+
+    try:
+        cfg = load_daemon_search_config(cli_vault=vault, cli_db_path=db_path)
+    except (FileNotFoundError, ValueError, RuntimeError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+    k = int(top_k) if top_k is not None else int(cfg.top_k_default)
+    expand = int(expand_links) if expand_links is not None else int(cfg.expand_links_default)
+    tags = tag or []
+
+    hits = search_daemon(
+        cfg,
+        query=query,
+        top_k=k,
+        prefer_recent=prefer_recent,
+        filters=SearchFilters(tags=tags, tag_or=tag_or, date_from=date_from, date_to=date_to),
+        expand_links=expand,
+    )
+
+    table = Table(title="Daemon Search Results", show_lines=False)
+    table.add_column("Score", justify="right")
+    table.add_column("Date", justify="left")
+    table.add_column("Path", overflow="fold")
+    table.add_column("Heading", overflow="fold")
+    table.add_column("Excerpt", overflow="fold")
+    table.add_column("Expanded", justify="center")
+
+    for h in hits:
+        table.add_row(
+            f"{h.score:.4f}" if not h.expanded_context else "",
+            h.effective_date,
+            h.rel_path,
+            h.heading_path,
+            h.excerpt,
+            "1" if h.expanded_context else "0",
+        )
+
+    console.print(table)
+
 
 def main():
     """Entry point for the CLI."""

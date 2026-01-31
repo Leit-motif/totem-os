@@ -26,6 +26,20 @@ embeddings_backend = "sqlite"
 embeddings_model = "dummy-sha256"
 embeddings_dim = 96
 
+# Phase 2 / Milestone 3: hybrid search (FTS5 + vectors)
+search_top_k_default = 10
+search_excerpt_max_chars = 400
+search_context_before_chars = 80
+search_context_after_chars = 320
+search_prefer_recent_half_life_days = 30
+search_prefer_recent_weight = 0.15
+search_hybrid_weight_lex = 0.5
+search_hybrid_weight_vec = 0.5
+search_expand_links_default = 0
+search_expand_links_cap = 10
+search_vector_backend = "sqlite"
+search_model = "dummy-sha256"
+
 # Optional: ChatGPT metadata provider defaults
 [chatgpt.summary]
 provider = "auto"
