@@ -51,6 +51,7 @@ Thumbs.db
 # Environment variables
 .env
 .env.*
+.envrc
 
 # Vault
 totem_vault/
@@ -58,3 +59,6 @@ totem_vault/
 # Totem repo-local config
 .totem/config.toml
 
+# Local scratch / agent notes
+temp.md
+.totem/Agents.md

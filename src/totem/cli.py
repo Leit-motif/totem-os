@@ -359,6 +359,11 @@ def ingest(
         "--include-action-items/--no-include-action-items",
         help="Omi: include action items in daily note block (default: False)",
     ),
+    omi_resume: bool = typer.Option(
+        True,
+        "--omi-resume/--no-omi-resume",
+        help="Omi: when --full-history, resume from last successful timestamp (default: True)",
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -422,7 +427,7 @@ def ingest(
 
     if all_sources or source == "omi":
         resume_from = None
-        if full_history:
+        if full_history and omi_resume:
             last = latest_by_source.get("omi")
             if last and last.last_successful_item_timestamp:
                 resume_from = _parse_iso_ts(last.last_successful_item_timestamp)
@@ -433,7 +438,7 @@ def ingest(
                 sync_all=full_history,
                 write_daily_note=True,
                 include_action_items=include_action_items,
-                obsidian_vault=Path(os.getenv("TOTEM_VAULT_PATH", "/Users/amrit/My Obsidian Vault")),
+                obsidian_vault=Path(os.getenv("TOTEM_VAULT_PATH", str(config.vault_path))),
                 ledger_writer=ledger_writer,
                 vault_paths=paths,
                 resume_from=resume_from,
@@ -639,12 +644,10 @@ def omi_sync(
                     os.environ["OMI_API_KEY"] = v.strip().strip('"').strip("'")
                     break
 
-    obsidian_vault_str = os.getenv("TOTEM_VAULT_PATH", "/Users/amrit/My Obsidian Vault")
-    obsidian_vault = Path(obsidian_vault_str)
-
     vault_path = get_global_vault_path()
     config = TotemConfig.from_env(cli_vault_path=vault_path)
     paths = VaultPaths.from_config(config)
+    obsidian_vault = Path(os.getenv("TOTEM_VAULT_PATH", str(config.vault_path)))
 
     if not paths.system.exists():
         console.print(f"[red]Error: Totem vault not initialized at {config.vault_path}[/red]")
