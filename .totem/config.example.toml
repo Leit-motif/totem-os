@@ -4,6 +4,42 @@
 # Optional: link a default vault for this repo
 vault_root = "/path/to/your/vault"
 
+# Optional: link Obsidian vaults (daemon required for `totem daemon index`)
+[obsidian.vaults]
+daemon_path = "/path/to/Daemon"
+tooling_path = "/path/to/Tooling"
+
+# Daemon vault indexing (Phase 2 / Milestone 1: index-only)
+[daemon]
+# Relative paths resolve against the daemon vault root.
+daemon_index_sqlite = "state/daemon_index.sqlite"
+exclude_globs = ["state/**", ".git/**"]
+frontmatter_journal_date_key = "date"
+frontmatter_journal_date_formats = ["%Y-%m-%d", "%m-%d-%Y"]
+
+# Phase 2 / Milestone 2: chunking + embeddings (no retrieval yet)
+chunks_min_bytes = 400
+chunks_max_bytes = 4000
+chunks_split_strategy = "paragraph_then_window"
+chunks_include_preamble = false
+embeddings_backend = "sqlite"
+embeddings_model = "dummy-sha256"
+embeddings_dim = 96
+
+# Phase 2 / Milestone 3: hybrid search (FTS5 + vectors)
+search_top_k_default = 10
+search_excerpt_max_chars = 400
+search_context_before_chars = 80
+search_context_after_chars = 320
+search_prefer_recent_half_life_days = 30
+search_prefer_recent_weight = 0.15
+search_hybrid_weight_lex = 0.5
+search_hybrid_weight_vec = 0.5
+search_expand_links_default = 0
+search_expand_links_cap = 10
+search_vector_backend = "sqlite"
+search_model = "dummy-sha256"
+
 # Optional: ChatGPT metadata provider defaults
 [chatgpt.summary]
 provider = "auto"

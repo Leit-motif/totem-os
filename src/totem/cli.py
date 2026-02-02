@@ -55,9 +55,8 @@ _global_vault_path = None
 
 def set_global_vault_path(vault_path: str = typer.Option(
     None,
-    "--vault",
-    "-v",
-    help="Path to vault directory (default: auto-resolve from current directory or repo config)",
+    "--totem-vault",
+    help="Path to Totem vault directory (default: auto-resolve from current directory or repo config)",
 )):
     """Global vault path option callback."""
     global _global_vault_path
@@ -77,6 +76,9 @@ app = typer.Typer(
 
 
 console = Console()
+
+daemon_app = typer.Typer(help="Daemon vault commands", add_completion=False)
+app.add_typer(daemon_app, name="daemon")
 
 def _parse_iso_ts(ts: str) -> datetime:
     """Parse ISO timestamp with optional Z suffix."""
@@ -357,6 +359,11 @@ def ingest(
         "--include-action-items/--no-include-action-items",
         help="Omi: include action items in daily note block (default: False)",
     ),
+    omi_resume: bool = typer.Option(
+        True,
+        "--omi-resume/--no-omi-resume",
+        help="Omi: when --full-history, resume from last successful timestamp (default: True)",
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -420,7 +427,7 @@ def ingest(
 
     if all_sources or source == "omi":
         resume_from = None
-        if full_history:
+        if full_history and omi_resume:
             last = latest_by_source.get("omi")
             if last and last.last_successful_item_timestamp:
                 resume_from = _parse_iso_ts(last.last_successful_item_timestamp)
@@ -431,7 +438,7 @@ def ingest(
                 sync_all=full_history,
                 write_daily_note=True,
                 include_action_items=include_action_items,
-                obsidian_vault=Path(os.getenv("TOTEM_VAULT_PATH", "/Users/amrit/My Obsidian Vault")),
+                obsidian_vault=Path(os.getenv("TOTEM_VAULT_PATH", str(config.vault_path))),
                 ledger_writer=ledger_writer,
                 vault_paths=paths,
                 resume_from=resume_from,
@@ -637,12 +644,10 @@ def omi_sync(
                     os.environ["OMI_API_KEY"] = v.strip().strip('"').strip("'")
                     break
 
-    obsidian_vault_str = os.getenv("TOTEM_VAULT_PATH", "/Users/amrit/My Obsidian Vault")
-    obsidian_vault = Path(obsidian_vault_str)
-
     vault_path = get_global_vault_path()
     config = TotemConfig.from_env(cli_vault_path=vault_path)
     paths = VaultPaths.from_config(config)
+    obsidian_vault = Path(os.getenv("TOTEM_VAULT_PATH", str(config.vault_path)))
 
     if not paths.system.exists():
         console.print(f"[red]Error: Totem vault not initialized at {config.vault_path}[/red]")
@@ -1714,6 +1719,192 @@ def version():
     """Show Totem OS version."""
     from . import __version__
     console.print(f"Totem OS v{__version__}")
+
+
+@daemon_app.command("index")
+def daemon_index(
+    vault: Optional[str] = typer.Option(
+        None,
+        "--vault",
+        help="Path to daemon Obsidian vault root (overrides .totem/config.toml [obsidian.vaults].daemon_path)",
+    ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help="Drop and recreate schema, then reindex all markdown files",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="SQLite DB path (relative to daemon vault unless absolute; overrides [daemon].daemon_index_sqlite)",
+    ),
+):
+    """Index the daemon Obsidian vault (index-only)."""
+    from .daemon_index.config import load_daemon_index_config
+    from .daemon_index.indexer import index_daemon_vault
+
+    try:
+        cfg = load_daemon_index_config(cli_vault=vault, cli_db_path=db_path)
+    except (FileNotFoundError, ValueError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+    summary = index_daemon_vault(cfg, full=full)
+    console.print(f"scanned={summary.scanned} updated={summary.updated} unchanged={summary.unchanged} deleted={summary.deleted}")
+
+@daemon_app.command("embed")
+def daemon_embed(
+    vault: Optional[str] = typer.Option(
+        None,
+        "--vault",
+        help="Path to daemon Obsidian vault root (overrides .totem/config.toml [obsidian.vaults].daemon_path)",
+    ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help="Recompute chunks for all files (non-destructive to chunk_embeddings table)",
+    ),
+    limit: Optional[int] = typer.Option(
+        None,
+        "--limit",
+        help="Maximum number of missing chunk embeddings to compute this run",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="SQLite DB path (relative to daemon vault unless absolute; overrides [daemon].daemon_index_sqlite)",
+    ),
+):
+    """Compute chunks + embeddings for the daemon vault (no retrieval yet)."""
+    from .daemon_embed.config import load_daemon_embed_config
+    from .daemon_embed.orchestrator import embed_daemon_vault
+
+    try:
+        cfg = load_daemon_embed_config(cli_vault=vault, cli_db_path=db_path)
+    except (FileNotFoundError, ValueError, RuntimeError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+    summary = embed_daemon_vault(cfg, full=full, limit=limit)
+    console.print(
+        "files_considered={files_considered} files_rechunked={files_rechunked} "
+        "chunks_upserted={chunks_upserted} chunks_embedded={chunks_embedded} "
+        "files_embedded={files_embedded} dangling_embeddings_deleted={dangling_embeddings_deleted}".format(
+            files_considered=summary.files_considered,
+            files_rechunked=summary.files_rechunked,
+            chunks_upserted=summary.chunks_upserted,
+            chunks_embedded=summary.chunks_embedded,
+            files_embedded=summary.files_embedded,
+            dangling_embeddings_deleted=summary.dangling_embeddings_deleted,
+        )
+    )
+
+@daemon_app.command("fts-rebuild")
+def daemon_fts_rebuild(
+    vault: Optional[str] = typer.Option(
+        None,
+        "--vault",
+        help="Path to daemon Obsidian vault root (overrides .totem/config.toml [obsidian.vaults].daemon_path)",
+    ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help="Rebuild FTS index from scratch",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="SQLite DB path (relative to daemon vault unless absolute; overrides [daemon].daemon_index_sqlite)",
+    ),
+):
+    """Rebuild/update the chunk FTS5 index from existing chunks."""
+    from .daemon_search.config import load_daemon_search_config
+    from .daemon_search.db import connect
+    from .daemon_search.fts import rebuild_chunk_fts
+
+    try:
+        cfg = load_daemon_search_config(cli_vault=vault, cli_db_path=db_path)
+    except (FileNotFoundError, ValueError, RuntimeError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+    conn = connect(cfg.db_path)
+    try:
+        stats = rebuild_chunk_fts(conn, vault_root=cfg.vault_root, full=full)
+    finally:
+        conn.close()
+
+    console.print(f"inserted={stats['inserted']} updated={stats['updated']} skipped={stats['skipped']}")
+
+
+@daemon_app.command("search")
+def daemon_search(
+    query: str = typer.Argument(..., help="Search query"),
+    top_k: Optional[int] = typer.Option(None, "--top-k", help="Number of primary results to return"),
+    tag: Optional[list[str]] = typer.Option(None, "--tag", help="Filter by tag (repeatable)"),
+    tag_or: bool = typer.Option(False, "--tag-or", help="If set, tags are ORed (default AND)"),
+    date_from: Optional[str] = typer.Option(None, "--date-from", help="Filter: effective date >= YYYY-MM-DD"),
+    date_to: Optional[str] = typer.Option(None, "--date-to", help="Filter: effective date <= YYYY-MM-DD"),
+    prefer_recent: bool = typer.Option(False, "--prefer-recent", help="Apply deterministic recency boost"),
+    expand_links: Optional[int] = typer.Option(
+        None,
+        "--expand-links",
+        help="0 disables; >0 appends up to N (capped) 1-hop neighbors after primary hits",
+    ),
+    vault: Optional[str] = typer.Option(
+        None,
+        "--vault",
+        help="Path to daemon Obsidian vault root (overrides .totem/config.toml [obsidian.vaults].daemon_path)",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="SQLite DB path (relative to daemon vault unless absolute; overrides [daemon].daemon_index_sqlite)",
+    ),
+):
+    """Hybrid daemon search (FTS5 + vectors), returns bounded excerpts only."""
+    from .daemon_search.config import load_daemon_search_config
+    from .daemon_search.engine import search_daemon
+    from .daemon_search.models import SearchFilters
+
+    try:
+        cfg = load_daemon_search_config(cli_vault=vault, cli_db_path=db_path)
+    except (FileNotFoundError, ValueError, RuntimeError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+    k = int(top_k) if top_k is not None else int(cfg.top_k_default)
+    expand = int(expand_links) if expand_links is not None else int(cfg.expand_links_default)
+    tags = tag or []
+
+    hits = search_daemon(
+        cfg,
+        query=query,
+        top_k=k,
+        prefer_recent=prefer_recent,
+        filters=SearchFilters(tags=tags, tag_or=tag_or, date_from=date_from, date_to=date_to),
+        expand_links=expand,
+    )
+
+    table = Table(title="Daemon Search Results", show_lines=False)
+    table.add_column("Score", justify="right")
+    table.add_column("Date", justify="left")
+    table.add_column("Path", overflow="fold")
+    table.add_column("Heading", overflow="fold")
+    table.add_column("Excerpt", overflow="fold")
+    table.add_column("Expanded", justify="center")
+
+    for h in hits:
+        table.add_row(
+            f"{h.score:.4f}" if not h.expanded_context else "",
+            h.effective_date,
+            h.rel_path,
+            h.heading_path,
+            h.excerpt,
+            "1" if h.expanded_context else "0",
+        )
+
+    console.print(table)
 
 
 def main():
