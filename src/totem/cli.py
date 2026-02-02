@@ -1907,6 +1907,44 @@ def daemon_search(
     console.print(table)
 
 
+@daemon_app.command("ask")
+def daemon_ask(
+    query: str = typer.Argument(..., help="Question/query to answer from the daemon vault"),
+    graph: bool = typer.Option(
+        False,
+        "--graph",
+        help="Enable deterministic 1-hop graph expansion (append-only, capped). Default OFF.",
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        help="Suppress the 'Why these sources' section in the output.",
+    ),
+    vault: Optional[str] = typer.Option(
+        None,
+        "--vault",
+        help="Path to daemon Obsidian vault root (overrides .totem/config.toml [obsidian.vaults].daemon_path)",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="SQLite DB path (relative to daemon vault unless absolute; overrides [daemon].daemon_index_sqlite)",
+    ),
+):
+    """Evidence-first ask loop over the daemon vault (Phase 3)."""
+    from .daemon_ask.ask import ask_daemon
+    from .daemon_ask.config import load_daemon_ask_config
+
+    try:
+        cfg = load_daemon_ask_config(cli_vault=vault, cli_db_path=db_path)
+    except (FileNotFoundError, ValueError, RuntimeError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+    result = ask_daemon(cfg, query=query, graph=graph or cfg.graph_default_on, quiet=quiet)
+    console.print(result.answer, end="")
+
+
 def main():
     """Entry point for the CLI."""
     # Handle --version before Typer processing

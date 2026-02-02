@@ -76,6 +76,13 @@ ChatGPT export subcommands (local ZIP only; Gmail flow removed):
 - `totem chatgpt ingest-from-downloads [--downloads-dir PATH] [--limit N]`: scan Downloads for export zips.
 - `totem chatgpt backfill-metadata [--limit N] [--dry-run]`: add metadata to existing notes.
 
+Daemon vault commands:
+- `totem daemon index`: index the daemon Obsidian vault into SQLite.
+- `totem daemon embed`: compute chunks + embeddings.
+- `totem daemon fts-rebuild`: rebuild FTS5 over chunk text.
+- `totem daemon search "<q>"`: hybrid retrieval (FTS5 + vectors), returns bounded excerpts.
+- `totem daemon ask "<q>" [--graph] [--quiet]`: evidence-first ask loop (writes traces).
+
 ## Full-History Ingest + Manifest
 
 The canonical ingestion manifest is stored at:
