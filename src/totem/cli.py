@@ -1915,6 +1915,21 @@ def daemon_ask(
         "--graph",
         help="Enable deterministic 1-hop graph expansion (append-only, capped). Default OFF.",
     ),
+    session: Optional[str] = typer.Option(
+        None,
+        "--session",
+        help="Session id to use (enables continuity across asks).",
+    ),
+    new_session: bool = typer.Option(
+        False,
+        "--new-session",
+        help="Create and switch to a new session before asking.",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Use current session if present; otherwise create one.",
+    ),
     quiet: bool = typer.Option(
         False,
         "--quiet",
@@ -1934,6 +1949,8 @@ def daemon_ask(
     """Evidence-first ask loop over the daemon vault (Phase 3)."""
     from .daemon_ask.ask import ask_daemon
     from .daemon_ask.config import load_daemon_ask_config
+    from .daemon_sessions.config import load_daemon_session_config
+    from .daemon_sessions.store import DaemonSessionStore
 
     try:
         cfg = load_daemon_ask_config(cli_vault=vault, cli_db_path=db_path)
@@ -1941,7 +1958,53 @@ def daemon_ask(
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=1)
 
-    result = ask_daemon(cfg, query=query, graph=graph or cfg.graph_default_on, quiet=quiet)
+    sess_cfg = load_daemon_session_config(cli_vault=str(cfg.vault_root))
+    store = DaemonSessionStore(sess_cfg.sessions_db_path)
+
+    snapshot = {
+        "daemon_ask": {
+            "vault_root": str(cfg.vault_root),
+            "db_path": str(cfg.db_path),
+            "top_k": int(cfg.top_k),
+            "per_file_cap": int(cfg.per_file_cap),
+            "packed_max_chars": int(cfg.packed_max_chars),
+        }
+    }
+
+    sid: Optional[str] = None
+    if session:
+        sid = session.strip()
+        s = store.get_session(sid)
+        if s is None:
+            console.print(f"[red]Error:[/red] Unknown session_id: {sid}")
+            raise typer.Exit(code=1)
+        store.set_current_session_id(sid)
+    elif new_session:
+        s = store.create_session(retrieval_budget_snapshot=snapshot)
+        sid = s.session_id
+    else:
+        current = store.get_current_session_id()
+        if current and store.get_session(current) is not None:
+            sid = current
+        else:
+            if resume:
+                console.print("[red]Error:[/red] --resume set but no current session exists.")
+                raise typer.Exit(code=1)
+            s = store.create_session(retrieval_budget_snapshot=snapshot)
+            sid = s.session_id
+
+    result = ask_daemon(
+        cfg,
+        query=query,
+        graph=graph or cfg.graph_default_on,
+        quiet=quiet,
+        session_store=store,
+        session_id=sid,
+        session_caps={
+            "last_n_queries_cap": sess_cfg.last_n_queries_cap,
+            "last_n_sources_cap": sess_cfg.last_n_sources_cap,
+        },
+    )
     console.print(result.answer, end="")
 
 

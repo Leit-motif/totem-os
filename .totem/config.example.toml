@@ -53,6 +53,12 @@ graph_default_on = false
 graph_expand_cap = 10
 graph_rep_chunk_ord = 0
 
+# Phase 3B / Sessions
+[daemon.sessions]
+sqlite = "state/daemon_sessions.sqlite"
+last_n_queries_cap = 20
+last_n_sources_cap = 30
+
 # Optional: ChatGPT metadata provider defaults
 [chatgpt.summary]
 provider = "auto"
