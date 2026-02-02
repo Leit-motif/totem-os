@@ -53,7 +53,10 @@ class DaemonAskConfig:
     # Tracing / formatting
     traces_dir_rel: str
     include_why: bool
-    # Graph expansion is added in Phase 3A / Milestone 2.
+    # Graph expansion (Phase 3A / Milestone 2)
+    graph_default_on: bool
+    graph_expand_cap: int
+    graph_rep_chunk_ord: int
 
 
 def load_daemon_ask_config(
@@ -89,4 +92,7 @@ def load_daemon_ask_config(
         packed_max_chars=_as_int(ask_section.get("packed_max_chars", 8000), name="[daemon.ask].packed_max_chars"),
         traces_dir_rel=str(ask_section.get("traces_dir_rel", "90_system/traces/daemon_ask")),
         include_why=_as_bool(ask_section.get("include_why", True), name="[daemon.ask].include_why"),
+        graph_default_on=_as_bool(ask_section.get("graph_default_on", False), name="[daemon.ask].graph_default_on"),
+        graph_expand_cap=_as_int(ask_section.get("graph_expand_cap", 10), name="[daemon.ask].graph_expand_cap"),
+        graph_rep_chunk_ord=_as_int(ask_section.get("graph_rep_chunk_ord", 0), name="[daemon.ask].graph_rep_chunk_ord"),
     )
