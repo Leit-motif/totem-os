@@ -40,6 +40,25 @@ search_expand_links_cap = 10
 search_vector_backend = "sqlite"
 search_model = "dummy-sha256"
 
+# Phase 3 / Ask pipeline (Phase 3A + 3B)
+[daemon.ask]
+top_k = 10
+per_file_cap = 3
+packed_max_chars = 8000
+traces_dir_rel = "90_system/traces/daemon_ask"
+include_why = true
+
+# Graph expansion default is OFF; enable via `totem daemon ask --graph`
+graph_default_on = false
+graph_expand_cap = 10
+graph_rep_chunk_ord = 0
+
+# Phase 3B / Sessions
+[daemon.sessions]
+sqlite = "state/daemon_sessions.sqlite"
+last_n_queries_cap = 20
+last_n_sources_cap = 30
+
 # Optional: ChatGPT metadata provider defaults
 [chatgpt.summary]
 provider = "auto"

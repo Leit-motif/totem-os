@@ -1907,6 +1907,117 @@ def daemon_search(
     console.print(table)
 
 
+@daemon_app.command("ask")
+def daemon_ask(
+    query: str = typer.Argument(..., help="Question/query to answer from the daemon vault"),
+    graph: bool = typer.Option(
+        False,
+        "--graph",
+        help="Enable deterministic 1-hop graph expansion (append-only, capped). Default OFF.",
+    ),
+    session: Optional[str] = typer.Option(
+        None,
+        "--session",
+        help="Session id to use (enables continuity across asks).",
+    ),
+    new_session: bool = typer.Option(
+        False,
+        "--new-session",
+        help="Create and switch to a new session before asking.",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Use current session if present; otherwise create one.",
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        help="Suppress the 'Why these sources' section in the output.",
+    ),
+    time: str = typer.Option(
+        "hybrid",
+        "--time",
+        help="Temporal mode: recent|month|year|all|hybrid (default: hybrid).",
+    ),
+    vault: Optional[str] = typer.Option(
+        None,
+        "--vault",
+        help="Path to daemon Obsidian vault root (overrides .totem/config.toml [obsidian.vaults].daemon_path)",
+    ),
+    db_path: Optional[str] = typer.Option(
+        None,
+        "--db-path",
+        help="SQLite DB path (relative to daemon vault unless absolute; overrides [daemon].daemon_index_sqlite)",
+    ),
+):
+    """Evidence-first ask loop over the daemon vault (Phase 3)."""
+    from .daemon_ask.ask import ask_daemon
+    from .daemon_ask.config import load_daemon_ask_config
+    from .daemon_sessions.config import load_daemon_session_config
+    from .daemon_sessions.store import DaemonSessionStore
+
+    try:
+        cfg = load_daemon_ask_config(cli_vault=vault, cli_db_path=db_path)
+    except (FileNotFoundError, ValueError, RuntimeError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+    sess_cfg = load_daemon_session_config(cli_vault=str(cfg.vault_root))
+    store = DaemonSessionStore(sess_cfg.sessions_db_path)
+
+    snapshot = {
+        "daemon_ask": {
+            "vault_root": str(cfg.vault_root),
+            "db_path": str(cfg.db_path),
+            "top_k": int(cfg.top_k),
+            "per_file_cap": int(cfg.per_file_cap),
+            "packed_max_chars": int(cfg.packed_max_chars),
+        }
+    }
+
+    sid: Optional[str] = None
+    if session:
+        sid = session.strip()
+        s = store.get_session(sid)
+        if s is None:
+            console.print(f"[red]Error:[/red] Unknown session_id: {sid}")
+            raise typer.Exit(code=1)
+        store.set_current_session_id(sid)
+    elif new_session:
+        s = store.create_session(retrieval_budget_snapshot=snapshot)
+        sid = s.session_id
+    else:
+        current = store.get_current_session_id()
+        if current and store.get_session(current) is not None:
+            sid = current
+        else:
+            if resume:
+                console.print("[red]Error:[/red] --resume set but no current session exists.")
+                raise typer.Exit(code=1)
+            s = store.create_session(retrieval_budget_snapshot=snapshot)
+            sid = s.session_id
+
+    try:
+        result = ask_daemon(
+            cfg,
+            query=query,
+            graph=graph or cfg.graph_default_on,
+            quiet=quiet,
+            time_mode=time,
+            session_store=store,
+            session_id=sid,
+            session_caps={
+                "last_n_queries_cap": sess_cfg.last_n_queries_cap,
+                "last_n_sources_cap": sess_cfg.last_n_sources_cap,
+            },
+        )
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1)
+    console.print(result.answer, end="")
+
+
 def main():
     """Entry point for the CLI."""
     # Handle --version before Typer processing
