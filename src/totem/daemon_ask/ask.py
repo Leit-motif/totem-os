@@ -14,6 +14,7 @@ from .models import DaemonAskResult
 from .packer import PackConfig, pack_context
 from .reason import build_answer
 from .rerank import RerankConfig, rerank_and_filter
+from .time import TemporalConfig, TemporalFeature, apply_temporal_layer
 from .trace import trace_payload, write_trace
 
 PIPELINE_VERSION = "phase3@ask_v1"
@@ -24,10 +25,16 @@ def _why_sources(
     retrieved_n: int,
     packed_n: int,
     graph_enabled: bool,
+    time_mode: str,
+    time_window_days: int | None,
 ) -> list[str]:
     bullets: list[str] = []
     bullets.append(f"Selected {packed_n}/{retrieved_n} hits under deterministic caps/budgets.")
     bullets.append("Primary hits come from hybrid FTS5 + vector search over indexed chunks.")
+    if time_window_days is None:
+        bullets.append(f"Applied temporal mode '{time_mode}' with deterministic decay (no hard time window).")
+    else:
+        bullets.append(f"Applied temporal mode '{time_mode}' with a {time_window_days}-day window.")
     if graph_enabled:
         bullets.append("Appended bounded 1-hop link neighbors (no reordering of primary hits).")
     return bullets[:4]
@@ -35,9 +42,29 @@ def _why_sources(
 
 def _hits_to_candidate_rows(
     hits: list[SearchHit],
+    temporal_features: list[TemporalFeature | None] | None = None,
 ) -> list[dict]:
     rows: list[dict] = []
+    t_features = temporal_features or []
     for i, h in enumerate(hits, start=1):
+        t = t_features[i - 1] if i - 1 < len(t_features) else None
+        time_features = None
+        if t is not None:
+            time_features = {
+                "mode": t.mode,
+                "note_type": t.note_type,
+                "reference_date": t.reference_date,
+                "effective_date": t.effective_date,
+                "age_days": int(t.age_days),
+                "window_days": t.window_days,
+                "within_window": bool(t.within_window),
+                "half_life_days": float(t.half_life_days),
+                "weight": float(t.weight),
+                "decay": float(t.decay),
+                "boost": float(t.boost),
+                "base_score": float(t.base_score),
+                "temporal_score": float(t.temporal_score),
+            }
         rows.append(
             {
                 "rank": i,
@@ -47,6 +74,7 @@ def _hits_to_candidate_rows(
                 "end_byte": int(h.end_byte),
                 "effective_date": str(h.effective_date),
                 "expanded_context": bool(h.expanded_context),
+                "time_features": time_features,
             }
         )
     return rows
@@ -140,6 +168,10 @@ def _session_pins(
     return pinned
 
 
+def _hit_key(hit: SearchHit) -> tuple[str, int, int]:
+    return (hit.rel_path, int(hit.start_byte), int(hit.end_byte))
+
+
 def ask_daemon(
     cfg: DaemonAskConfig,
     *,
@@ -149,7 +181,13 @@ def ask_daemon(
     session_store: object | None = None,
     session_id: str | None = None,
     session_caps: dict | None = None,
+    time_mode: str | None = None,
 ) -> DaemonAskResult:
+    if time_mode is not None:
+        candidate_mode = time_mode.strip().lower()
+        if candidate_mode not in {"recent", "month", "year", "all", "hybrid"}:
+            raise ValueError("Invalid --time value. Expected one of: recent|month|year|all|hybrid")
+
     # Reuse daemon_search config for scoring + excerpt behavior.
     search_cfg = load_daemon_search_config(cli_vault=str(cfg.vault_root), cli_db_path=str(cfg.db_path))
 
@@ -203,13 +241,40 @@ def ask_daemon(
     finally:
         conn.close()
 
-    filtered = rerank_and_filter(
+    temporal = apply_temporal_layer(
         hits,
+        mode=time_mode,
+        cfg=TemporalConfig(
+            default_mode=effective_cfg.time_mode_default,
+            window_recent_days=effective_cfg.time_window_recent_days,
+            window_month_days=effective_cfg.time_window_month_days,
+            window_year_days=effective_cfg.time_window_year_days,
+            decay_half_life_days=effective_cfg.time_decay_half_life_days,
+            weight_journal=effective_cfg.time_weight_journal,
+            weight_evergreen=effective_cfg.time_weight_evergreen,
+        ),
+    )
+
+    filtered = rerank_and_filter(
+        temporal.hits,
         cfg=RerankConfig(per_file_cap=int(effective_cfg.per_file_cap), keep_expanded=True),
     )
+    feature_by_key: dict[tuple[str, int, int], TemporalFeature] = {}
+    for i, h in enumerate(temporal.hits):
+        key = _hit_key(h)
+        if key not in feature_by_key and i < len(temporal.features):
+            feature_by_key[key] = temporal.features[i]
+    filtered_features = [feature_by_key.get(_hit_key(h)) for h in filtered]
+
     packed = pack_context(filtered, cfg=PackConfig(packed_max_chars=int(effective_cfg.packed_max_chars)))
 
-    why = _why_sources(retrieved_n=len(hits), packed_n=len(packed), graph_enabled=graph_enabled)
+    why = _why_sources(
+        retrieved_n=len(hits),
+        packed_n=len(packed),
+        graph_enabled=graph_enabled,
+        time_mode=temporal.mode,
+        time_window_days=temporal.window_days,
+    )
     answer, citations, why_out = build_answer(
         query=query,
         packed=packed,
@@ -245,7 +310,10 @@ def ask_daemon(
         ask_config_effective=asdict(effective_cfg) if effective_cfg != cfg else None,
         search_config=asdict(search_cfg),
         graph_enabled=graph_enabled,
-        candidates=_hits_to_candidate_rows(filtered),
+        candidates=_hits_to_candidate_rows(filtered, temporal_features=filtered_features),
+        temporal_mode=temporal.mode,
+        temporal_reference_date=temporal.reference_date,
+        temporal_window_days=temporal.window_days,
         packed=packed,
         answer=answer,
         citations=citations,

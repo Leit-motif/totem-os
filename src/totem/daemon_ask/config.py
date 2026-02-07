@@ -32,6 +32,19 @@ def _as_bool(value: Any, *, name: str) -> bool:
     raise ValueError(f"Invalid config: {name} must be a bool")
 
 
+def _as_float(value: Any, *, name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"Invalid config: {name} must be a float")
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            pass
+    raise ValueError(f"Invalid config: {name} must be a float")
+
+
 def _as_str(value: Any, *, name: str) -> str:
     if value is None:
         raise ValueError(f"Invalid config: {name} must be a string")
@@ -58,6 +71,15 @@ class DaemonAskConfig:
     graph_expand_cap: int
     graph_rep_chunk_ord: int
 
+    # Temporal reasoning (Phase 3B / Milestone 6)
+    time_mode_default: str
+    time_window_recent_days: int
+    time_window_month_days: int
+    time_window_year_days: int
+    time_decay_half_life_days: float
+    time_weight_journal: float
+    time_weight_evergreen: float
+
 
 def load_daemon_ask_config(
     *,
@@ -74,7 +96,9 @@ def load_daemon_ask_config(
     if not isinstance(daemon_section, dict):
         daemon_section = {}
     ask_section = daemon_section.get("ask") if isinstance(daemon_section.get("ask"), dict) else {}
-    # Temporal reasoning config is added in Phase 3B / Milestone 6.
+    time_mode_default = _as_str(ask_section.get("time_mode_default", "hybrid"), name="[daemon.ask].time_mode_default").strip().lower()
+    if time_mode_default not in {"recent", "month", "year", "all", "hybrid"}:
+        raise ValueError("Invalid config: [daemon.ask].time_mode_default must be one of recent|month|year|all|hybrid")
 
     db_path_value = daemon_section.get("daemon_index_sqlite", "state/daemon_index.sqlite")
     if cli_db_path is not None:
@@ -95,4 +119,20 @@ def load_daemon_ask_config(
         graph_default_on=_as_bool(ask_section.get("graph_default_on", False), name="[daemon.ask].graph_default_on"),
         graph_expand_cap=_as_int(ask_section.get("graph_expand_cap", 10), name="[daemon.ask].graph_expand_cap"),
         graph_rep_chunk_ord=_as_int(ask_section.get("graph_rep_chunk_ord", 0), name="[daemon.ask].graph_rep_chunk_ord"),
+        time_mode_default=time_mode_default,
+        time_window_recent_days=_as_int(ask_section.get("time_window_recent_days", 7), name="[daemon.ask].time_window_recent_days"),
+        time_window_month_days=_as_int(ask_section.get("time_window_month_days", 30), name="[daemon.ask].time_window_month_days"),
+        time_window_year_days=_as_int(ask_section.get("time_window_year_days", 180), name="[daemon.ask].time_window_year_days"),
+        time_decay_half_life_days=_as_float(
+            ask_section.get("time_decay_half_life_days", 30.0),
+            name="[daemon.ask].time_decay_half_life_days",
+        ),
+        time_weight_journal=_as_float(
+            ask_section.get("time_weight_journal", 0.20),
+            name="[daemon.ask].time_weight_journal",
+        ),
+        time_weight_evergreen=_as_float(
+            ask_section.get("time_weight_evergreen", 0.04),
+            name="[daemon.ask].time_weight_evergreen",
+        ),
     )

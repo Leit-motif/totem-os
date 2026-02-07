@@ -81,7 +81,7 @@ Daemon vault commands:
 - `totem daemon embed`: compute chunks + embeddings.
 - `totem daemon fts-rebuild`: rebuild FTS5 over chunk text.
 - `totem daemon search "<q>"`: hybrid retrieval (FTS5 + vectors), returns bounded excerpts.
-- `totem daemon ask "<q>" [--graph] [--quiet]`: evidence-first ask loop (writes traces).
+- `totem daemon ask "<q>" [--graph] [--quiet] [--time recent|month|year|all|hybrid]`: evidence-first ask loop with temporal reasoning (writes traces).
 
 ## Full-History Ingest + Manifest
 

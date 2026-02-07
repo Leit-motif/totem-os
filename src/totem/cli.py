@@ -1935,6 +1935,11 @@ def daemon_ask(
         "--quiet",
         help="Suppress the 'Why these sources' section in the output.",
     ),
+    time: str = typer.Option(
+        "hybrid",
+        "--time",
+        help="Temporal mode: recent|month|year|all|hybrid (default: hybrid).",
+    ),
     vault: Optional[str] = typer.Option(
         None,
         "--vault",
@@ -1993,18 +1998,23 @@ def daemon_ask(
             s = store.create_session(retrieval_budget_snapshot=snapshot)
             sid = s.session_id
 
-    result = ask_daemon(
-        cfg,
-        query=query,
-        graph=graph or cfg.graph_default_on,
-        quiet=quiet,
-        session_store=store,
-        session_id=sid,
-        session_caps={
-            "last_n_queries_cap": sess_cfg.last_n_queries_cap,
-            "last_n_sources_cap": sess_cfg.last_n_sources_cap,
-        },
-    )
+    try:
+        result = ask_daemon(
+            cfg,
+            query=query,
+            graph=graph or cfg.graph_default_on,
+            quiet=quiet,
+            time_mode=time,
+            session_store=store,
+            session_id=sid,
+            session_caps={
+                "last_n_queries_cap": sess_cfg.last_n_queries_cap,
+                "last_n_sources_cap": sess_cfg.last_n_sources_cap,
+            },
+        )
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1)
     console.print(result.answer, end="")
 
 

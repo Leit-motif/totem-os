@@ -49,9 +49,15 @@ def test_apply_budget_snapshot_overrides_cfg() -> None:
         graph_default_on=False,
         graph_expand_cap=10,
         graph_rep_chunk_ord=0,
+        time_mode_default="hybrid",
+        time_window_recent_days=7,
+        time_window_month_days=30,
+        time_window_year_days=180,
+        time_decay_half_life_days=30.0,
+        time_weight_journal=0.20,
+        time_weight_evergreen=0.04,
     )
     eff = _apply_budget_snapshot(cfg, {"daemon_ask": {"top_k": "2", "per_file_cap": 1, "packed_max_chars": 123}})
     assert eff.top_k == 2
     assert eff.per_file_cap == 1
     assert eff.packed_max_chars == 123
-
