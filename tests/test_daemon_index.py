@@ -184,3 +184,21 @@ def test_include_globs_respects_exclude_globs(tmp_path: Path):
     rows = _q(cfg.db_path, "SELECT rel_path FROM files ORDER BY rel_path")
     assert [r["rel_path"] for r in rows] == ["Omi Transcripts/public/y.md"]
 
+
+def test_include_globs_empty_list_indexes_nothing(tmp_path: Path):
+    cfg = _cfg(tmp_path)
+    cfg = DaemonIndexConfig(
+        vault_root=cfg.vault_root,
+        db_path=cfg.db_path,
+        exclude_globs=cfg.exclude_globs,
+        include_globs=[],
+        frontmatter_journal_date_key=cfg.frontmatter_journal_date_key,
+        frontmatter_journal_date_formats=cfg.frontmatter_journal_date_formats,
+    )
+
+    (cfg.vault_root / "a.md").write_text("# A\n", encoding="utf-8")
+    summary = index_daemon_vault(cfg)
+    assert summary.scanned == 0
+    rows = _q(cfg.db_path, "SELECT rel_path FROM files ORDER BY rel_path")
+    assert [r["rel_path"] for r in rows] == []
+

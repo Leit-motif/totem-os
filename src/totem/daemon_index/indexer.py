@@ -32,8 +32,10 @@ def _is_excluded(rel_posix: str, exclude_globs: list[str]) -> bool:
 
 
 def _is_included(rel_posix: str, include_globs: list[str] | None) -> bool:
-    if not include_globs:
+    if include_globs is None:
         return True
+    if len(include_globs) == 0:
+        return False
     for pat in include_globs:
         if fnmatch.fnmatchcase(rel_posix, pat):
             return True
@@ -115,7 +117,7 @@ def index_daemon_vault(cfg: DaemonIndexConfig, *, full: bool = False) -> DaemonI
             parsed = parse_markdown_bytes(
                 data,
                 journal_date_key=cfg.frontmatter_journal_date_key,
-                journal_date_formats=cfg.frontmatter_journal_date_formats or ["%Y-%m-%d"],
+                journal_date_formats=cfg.frontmatter_journal_date_formats,
             )
             record = FileRecord(
                 rel_path=rel_posix,
