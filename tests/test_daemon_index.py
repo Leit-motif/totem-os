@@ -136,3 +136,51 @@ def test_outlinks_ignored_in_code_fences_and_inline_code():
     )
     assert [o.target for o in parsed.outlinks] == ["Keep"]
 
+
+def test_include_globs_only_indexes_allowlisted_paths(tmp_path: Path):
+    cfg = _cfg(tmp_path)
+    cfg = DaemonIndexConfig(
+        vault_root=cfg.vault_root,
+        db_path=cfg.db_path,
+        exclude_globs=cfg.exclude_globs,
+        include_globs=["Omi Transcripts/**", "5.0 Journal/**"],
+        frontmatter_journal_date_key=cfg.frontmatter_journal_date_key,
+        frontmatter_journal_date_formats=cfg.frontmatter_journal_date_formats,
+    )
+
+    (cfg.vault_root / "Omi Transcripts").mkdir(parents=True, exist_ok=True)
+    (cfg.vault_root / "5.0 Journal").mkdir(parents=True, exist_ok=True)
+    (cfg.vault_root / "40_chatgpt" / "conversations").mkdir(parents=True, exist_ok=True)
+
+    (cfg.vault_root / "Omi Transcripts" / "a.md").write_text("# A\n", encoding="utf-8")
+    (cfg.vault_root / "5.0 Journal" / "b.md").write_text("# B\n", encoding="utf-8")
+    (cfg.vault_root / "40_chatgpt" / "conversations" / "c.md").write_text("# C\n", encoding="utf-8")
+
+    summary = index_daemon_vault(cfg)
+    assert summary.scanned == 2
+    rows = _q(cfg.db_path, "SELECT rel_path FROM files ORDER BY rel_path")
+    assert [r["rel_path"] for r in rows] == ["5.0 Journal/b.md", "Omi Transcripts/a.md"]
+
+
+def test_include_globs_respects_exclude_globs(tmp_path: Path):
+    cfg = _cfg(tmp_path)
+    cfg = DaemonIndexConfig(
+        vault_root=cfg.vault_root,
+        db_path=cfg.db_path,
+        exclude_globs=["Omi Transcripts/private/**", "state/**", ".git/**"],
+        include_globs=["Omi Transcripts/**"],
+        frontmatter_journal_date_key=cfg.frontmatter_journal_date_key,
+        frontmatter_journal_date_formats=cfg.frontmatter_journal_date_formats,
+    )
+
+    (cfg.vault_root / "Omi Transcripts" / "private").mkdir(parents=True, exist_ok=True)
+    (cfg.vault_root / "Omi Transcripts" / "public").mkdir(parents=True, exist_ok=True)
+
+    (cfg.vault_root / "Omi Transcripts" / "private" / "x.md").write_text("# X\n", encoding="utf-8")
+    (cfg.vault_root / "Omi Transcripts" / "public" / "y.md").write_text("# Y\n", encoding="utf-8")
+
+    summary = index_daemon_vault(cfg)
+    assert summary.scanned == 1
+    rows = _q(cfg.db_path, "SELECT rel_path FROM files ORDER BY rel_path")
+    assert [r["rel_path"] for r in rows] == ["Omi Transcripts/public/y.md"]
+

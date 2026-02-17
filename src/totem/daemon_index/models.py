@@ -10,8 +10,9 @@ class DaemonIndexConfig:
     vault_root: Path
     db_path: Path
     exclude_globs: list[str]
-    frontmatter_journal_date_key: str
-    frontmatter_journal_date_formats: list[str]
+    include_globs: list[str] | None = None
+    frontmatter_journal_date_key: str = "date"
+    frontmatter_journal_date_formats: list[str] | None = None
 
 
 @dataclass(frozen=True)
