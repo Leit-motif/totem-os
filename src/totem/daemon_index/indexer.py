@@ -31,7 +31,25 @@ def _is_excluded(rel_posix: str, exclude_globs: list[str]) -> bool:
     return False
 
 
-def _iter_markdown_files(vault_root: Path, exclude_globs: list[str]) -> list[Path]:
+def _is_included(rel_posix: str, include_globs: list[str] | None) -> bool:
+    if include_globs is None:
+        return True
+    if len(include_globs) == 0:
+        return False
+    for pat in include_globs:
+        if fnmatch.fnmatchcase(rel_posix, pat):
+            return True
+        # Allow directory-prefix shorthand in config, e.g. "5.0 Journal/".
+        if pat.endswith("/") and rel_posix.startswith(pat):
+            return True
+    return False
+
+
+def _iter_markdown_files(
+    vault_root: Path,
+    exclude_globs: list[str],
+    include_globs: list[str] | None = None,
+) -> list[Path]:
     paths: list[Path] = []
     for p in vault_root.rglob("*.md"):
         try:
@@ -39,6 +57,8 @@ def _iter_markdown_files(vault_root: Path, exclude_globs: list[str]) -> list[Pat
         except ValueError:
             continue
         rel_posix = rel.as_posix()
+        if not _is_included(rel_posix, include_globs):
+            continue
         if _is_excluded(rel_posix, exclude_globs):
             continue
         paths.append(p)
@@ -63,7 +83,11 @@ def index_daemon_vault(cfg: DaemonIndexConfig, *, full: bool = False) -> DaemonI
         updated = 0
         unchanged = 0
 
-        disk_paths = _iter_markdown_files(cfg.vault_root, cfg.exclude_globs)
+        disk_paths = _iter_markdown_files(
+            cfg.vault_root,
+            cfg.exclude_globs,
+            cfg.include_globs,
+        )
         disk_rel_paths: set[str] = set()
 
         for abs_path in disk_paths:

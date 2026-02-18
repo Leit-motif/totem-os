@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -10,8 +10,11 @@ class DaemonIndexConfig:
     vault_root: Path
     db_path: Path
     exclude_globs: list[str]
-    frontmatter_journal_date_key: str
-    frontmatter_journal_date_formats: list[str]
+    include_globs: list[str] | None = None
+    frontmatter_journal_date_key: str = "date"
+    frontmatter_journal_date_formats: list[str] = field(
+        default_factory=lambda: ["%Y-%m-%d", "%m-%d-%Y"]
+    )
 
 
 @dataclass(frozen=True)

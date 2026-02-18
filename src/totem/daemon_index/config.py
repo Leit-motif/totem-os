@@ -52,6 +52,7 @@ def load_daemon_index_config(
 
     db_path_value = daemon_section.get("daemon_index_sqlite", "state/daemon_index.sqlite")
     exclude_globs = daemon_section.get("exclude_globs", ["state/**", ".git/**"])
+    include_globs = daemon_section.get("include_globs", None)
     fm_key = daemon_section.get("frontmatter_journal_date_key", "date")
     fm_formats = daemon_section.get("frontmatter_journal_date_formats", ["%Y-%m-%d", "%m-%d-%Y"])
 
@@ -64,6 +65,10 @@ def load_daemon_index_config(
 
     if not isinstance(exclude_globs, list) or not all(isinstance(x, str) for x in exclude_globs):
         raise ValueError("Invalid config: [daemon].exclude_globs must be a list of strings")
+    if include_globs is not None and (
+        not isinstance(include_globs, list) or not all(isinstance(x, str) for x in include_globs)
+    ):
+        raise ValueError("Invalid config: [daemon].include_globs must be a list of strings or null")
     if not isinstance(fm_key, str) or not fm_key.strip():
         raise ValueError("Invalid config: [daemon].frontmatter_journal_date_key must be a non-empty string")
     if not isinstance(fm_formats, list) or not all(isinstance(x, str) for x in fm_formats):
@@ -73,6 +78,7 @@ def load_daemon_index_config(
         vault_root=vault_root,
         db_path=db_path,
         exclude_globs=exclude_globs,
+        include_globs=include_globs,
         frontmatter_journal_date_key=fm_key,
         frontmatter_journal_date_formats=fm_formats,
     )
