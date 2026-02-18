@@ -13,7 +13,7 @@ from .chunking import (
     load_headings_for_file,
     plan_chunks_for_file,
 )
-from .embedder import DeterministicSha256Embedder, mean_float32_le
+from .embedder import create_text_embedder, mean_float32_le
 from .models import DaemonEmbedConfig, DaemonEmbedSummary, PlannedChunk, VectorRecord
 from .vectorstore import SqliteVectorStore
 
@@ -176,7 +176,11 @@ def embed_daemon_vault(
         if limit is not None:
             missing_rows = missing_rows[: max(0, int(limit))]
 
-        embedder = DeterministicSha256Embedder(cfg.embeddings.dim)
+        embedder = create_text_embedder(
+            backend=cfg.embeddings.backend,
+            model=cfg.embeddings.model,
+            dim=cfg.embeddings.dim,
+        )
 
         vectors_to_upsert: list[VectorRecord] = []
         for r in missing_rows:

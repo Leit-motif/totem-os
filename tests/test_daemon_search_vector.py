@@ -39,7 +39,7 @@ def test_vector_search_is_deterministic(tmp_path: Path):
 
     conn = connect(idx_cfg.db_path)
     try:
-        q = embed_query("alpha", dim=16)
+        q = embed_query("alpha", backend="sqlite", model="m1", dim=16)
         r1 = vector_search(conn, query_vector=q, model="m1", dim=16, top_k=5, allowed_chunk_hashes=None)
         r2 = vector_search(conn, query_vector=q, model="m1", dim=16, top_k=5, allowed_chunk_hashes=None)
         assert r1 == r2

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import sqlite3
 
-from totem.daemon_embed.embedder import DeterministicSha256Embedder
+from totem.daemon_embed.embedder import create_text_embedder
 from totem.daemon_embed.vectorstore import SqliteVectorStore
 
 
-def embed_query(query: str, *, dim: int) -> bytes:
-    embedder = DeterministicSha256Embedder(dim)
+def embed_query(query: str, *, backend: str, model: str, dim: int) -> bytes:
+    embedder = create_text_embedder(backend=backend, model=model, dim=dim)
     return embedder.embed_text(query)
 
 
