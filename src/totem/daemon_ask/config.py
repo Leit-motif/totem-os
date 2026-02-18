@@ -62,10 +62,14 @@ class DaemonAskConfig:
     top_k: int
     per_file_cap: int
     packed_max_chars: int
+    auto_retrieve_enabled: bool
+    retrieval_top_k: int
+    inject_n: int
 
     # Tracing / formatting
     traces_dir_rel: str
     include_why: bool
+    sources_mode_default: str  # off|auto|always
     # Graph expansion (Phase 3A / Milestone 2)
     graph_default_on: bool
     graph_expand_cap: int
@@ -100,6 +104,12 @@ def load_daemon_ask_config(
     if time_mode_default not in {"recent", "month", "year", "all", "hybrid"}:
         raise ValueError("Invalid config: [daemon.ask].time_mode_default must be one of recent|month|year|all|hybrid")
 
+    sources_mode_default = _as_str(
+        ask_section.get("sources_mode_default", "auto"), name="[daemon.ask].sources_mode_default"
+    ).strip().lower()
+    if sources_mode_default not in {"off", "auto", "always"}:
+        raise ValueError("Invalid config: [daemon.ask].sources_mode_default must be one of off|auto|always")
+
     db_path_value = daemon_section.get("daemon_index_sqlite", "state/daemon_index.sqlite")
     if cli_db_path is not None:
         db_path_value = cli_db_path
@@ -108,14 +118,22 @@ def load_daemon_ask_config(
     if not db_path.is_absolute():
         db_path = (vault_root / db_path).resolve()
 
+    top_k = _as_int(ask_section.get("top_k", 10), name="[daemon.ask].top_k")
+
     return DaemonAskConfig(
         vault_root=vault_root,
         db_path=db_path,
-        top_k=_as_int(ask_section.get("top_k", 10), name="[daemon.ask].top_k"),
+        top_k=top_k,
         per_file_cap=_as_int(ask_section.get("per_file_cap", 3), name="[daemon.ask].per_file_cap"),
         packed_max_chars=_as_int(ask_section.get("packed_max_chars", 8000), name="[daemon.ask].packed_max_chars"),
+        auto_retrieve_enabled=_as_bool(
+            ask_section.get("auto_retrieve_enabled", True), name="[daemon.ask].auto_retrieve_enabled"
+        ),
+        retrieval_top_k=_as_int(ask_section.get("retrieval_top_k", top_k), name="[daemon.ask].retrieval_top_k"),
+        inject_n=_as_int(ask_section.get("inject_n", top_k), name="[daemon.ask].inject_n"),
         traces_dir_rel=str(ask_section.get("traces_dir_rel", "90_system/traces/daemon_ask")),
         include_why=_as_bool(ask_section.get("include_why", True), name="[daemon.ask].include_why"),
+        sources_mode_default=sources_mode_default,
         graph_default_on=_as_bool(ask_section.get("graph_default_on", False), name="[daemon.ask].graph_default_on"),
         graph_expand_cap=_as_int(ask_section.get("graph_expand_cap", 10), name="[daemon.ask].graph_expand_cap"),
         graph_rep_chunk_ord=_as_int(ask_section.get("graph_rep_chunk_ord", 0), name="[daemon.ask].graph_rep_chunk_ord"),

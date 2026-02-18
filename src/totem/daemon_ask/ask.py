@@ -182,11 +182,16 @@ def ask_daemon(
     session_id: str | None = None,
     session_caps: dict | None = None,
     time_mode: str | None = None,
+    sources_mode: str | None = None,
 ) -> DaemonAskResult:
     if time_mode is not None:
         candidate_mode = time_mode.strip().lower()
         if candidate_mode not in {"recent", "month", "year", "all", "hybrid"}:
             raise ValueError("Invalid --time value. Expected one of: recent|month|year|all|hybrid")
+
+    effective_sources_mode = (sources_mode or cfg.sources_mode_default).strip().lower()
+    if effective_sources_mode not in {"off", "auto", "always"}:
+        raise ValueError("Invalid sources_mode. Expected one of: off|auto|always")
 
     # Reuse daemon_search config for scoring + excerpt behavior.
     search_cfg = load_daemon_search_config(cli_vault=str(cfg.vault_root), cli_db_path=str(cfg.db_path))
@@ -204,14 +209,16 @@ def ask_daemon(
             effective_cfg = _apply_budget_snapshot(cfg, getattr(s, "retrieval_budget_snapshot", None))
 
     filters = SearchFilters(tags=[], tag_or=False, date_from=None, date_to=None)
-    primary = search_daemon(
-        search_cfg,
-        query=query,
-        top_k=int(effective_cfg.top_k),
-        prefer_recent=False,
-        filters=filters,
-        expand_links=0,
-    )
+    primary: list[SearchHit] = []
+    if bool(effective_cfg.auto_retrieve_enabled):
+        primary = search_daemon(
+            search_cfg,
+            query=query,
+            top_k=int(effective_cfg.retrieval_top_k),
+            prefer_recent=False,
+            filters=filters,
+            expand_links=0,
+        )
 
     hits: list[SearchHit] = list(primary)
     graph_enabled = bool(graph)
@@ -259,6 +266,7 @@ def ask_daemon(
         temporal.hits,
         cfg=RerankConfig(per_file_cap=int(effective_cfg.per_file_cap), keep_expanded=True),
     )
+    filtered = filtered[: max(0, int(effective_cfg.inject_n))]
     feature_by_key: dict[tuple[str, int, int], TemporalFeature] = {}
     for i, h in enumerate(temporal.hits):
         key = _hit_key(h)
@@ -280,6 +288,7 @@ def ask_daemon(
         packed=packed,
         include_why=(effective_cfg.include_why and not quiet),
         why_these_sources=why,
+        sources_mode=effective_sources_mode,
     )
 
     if session_store is not None and session_id is not None:
