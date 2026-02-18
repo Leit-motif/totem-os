@@ -60,6 +60,10 @@ def load_daemon_search_config(
     if dim <= 0:
         raise ValueError("Invalid config: [daemon].embeddings_dim must be > 0")
 
+    vector_backend = str(
+        daemon_section.get("search_vector_backend", daemon_section.get("embeddings_backend", "sqlite"))
+    )
+
     return DaemonSearchConfig(
         vault_root=vault_root,
         db_path=db_path,
@@ -100,7 +104,7 @@ def load_daemon_search_config(
             daemon_section.get("search_expand_links_cap", 10),
             name="[daemon].search_expand_links_cap",
         ),
-        vector_backend=str(daemon_section.get("search_vector_backend", "sqlite")),
+        vector_backend=vector_backend,
         model=model,
         dim=dim,
     )
