@@ -63,7 +63,12 @@ def search_daemon(
             date_to=filters.date_to,
         )
 
-        query_vec = embed_query(query, dim=cfg.dim)
+        query_vec = embed_query(
+            query,
+            backend=cfg.vector_backend,
+            model=cfg.model,
+            dim=cfg.dim,
+        )
         vec_hits = vector_search(
             conn,
             query_vector=query_vec,
