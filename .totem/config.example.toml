@@ -45,6 +45,10 @@ search_model = "dummy-sha256"
 top_k = 10
 per_file_cap = 3
 packed_max_chars = 8000
+auto_retrieve_enabled = true
+retrieval_top_k = 10
+inject_n = 10
+sources_mode_default = "auto" # off|auto|always
 traces_dir_rel = "90_system/traces/daemon_ask"
 include_why = true
 

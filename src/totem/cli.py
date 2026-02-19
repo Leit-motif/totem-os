@@ -1935,6 +1935,11 @@ def daemon_ask(
         "--quiet",
         help="Suppress the 'Why these sources' section in the output.",
     ),
+    sources_mode: Optional[str] = typer.Option(
+        None,
+        "--sources-mode",
+        help="Citation display mode: off|auto|always (default from config).",
+    ),
     time: str = typer.Option(
         "hybrid",
         "--time",
@@ -2005,6 +2010,7 @@ def daemon_ask(
             graph=graph or cfg.graph_default_on,
             quiet=quiet,
             time_mode=time,
+            sources_mode=sources_mode,
             session_store=store,
             session_id=sid,
             session_caps={
