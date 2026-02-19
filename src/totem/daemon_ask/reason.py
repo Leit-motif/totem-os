@@ -9,6 +9,7 @@ def build_answer(
     packed: list[PackedExcerpt],
     include_why: bool,
     why_these_sources: list[str],
+    sources_mode: str = "auto",  # off|auto|always
 ) -> tuple[str, list[Citation], list[str]]:
     citations: list[Citation] = [p.citation for p in packed]
 
@@ -19,6 +20,9 @@ def build_answer(
     if not packed:
         lines.append("No matches found in the daemon vault index for this query.")
         return ("\n".join(lines).rstrip() + "\n", [], (why_these_sources if include_why else []))
+
+    show_sources = sources_mode in {"auto", "always"}
+    source_cap = len(citations) if sources_mode == "always" else min(len(citations), 3)
 
     lines.append("Evidence (excerpts):")
     for i, p in enumerate(packed, start=1):
@@ -33,12 +37,14 @@ def build_answer(
         cite = p.citation.to_compact_str()
         lines.append(f"{i}. {meta}".rstrip())
         lines.append(f"   {p.excerpt}".rstrip())
-        lines.append(f"   [{cite}]")
+        if show_sources:
+            lines.append(f"   [{cite}]")
 
-    lines.append("")
-    lines.append("Citations:")
-    for c in citations:
-        lines.append(f"- {c.to_compact_str()}")
+    if show_sources:
+        lines.append("")
+        lines.append("Citations:")
+        for c in citations[:source_cap]:
+            lines.append(f"- {c.to_compact_str()}")
 
     if include_why and why_these_sources:
         lines.append("")
