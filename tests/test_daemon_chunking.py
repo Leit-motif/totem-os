@@ -97,3 +97,41 @@ def test_window_splitting_is_deterministic_and_utf8_safe(tmp_path: Path):
     finally:
         conn.close()
 
+
+def test_min_bytes_merges_tiny_paragraph_spans(tmp_path: Path):
+    cfg = _index_cfg(tmp_path)
+    note = cfg.vault_root / "small.md"
+    note.write_text("# H1\nA\n\nB\n\nThis is a larger paragraph for chunking.\n", encoding="utf-8")
+    index_daemon_vault(cfg)
+
+    conn = _conn(cfg.db_path)
+    try:
+        row = conn.execute("SELECT id, size_bytes FROM files WHERE rel_path = 'small.md'").fetchone()
+        file_id = int(row["id"])
+        headings = load_headings_for_file(conn, file_id)
+
+        no_merge = plan_chunks_for_file(
+            vault_root=cfg.vault_root,
+            rel_path="small.md",
+            file_id=file_id,
+            file_size_bytes=int(row["size_bytes"]),
+            headings=headings,
+            chunking=ChunkingConfig(min_bytes=0, max_bytes=4000, split_strategy="paragraph_then_window", include_preamble=False),
+            embeddings_model="dummy",
+        )
+        merged = plan_chunks_for_file(
+            vault_root=cfg.vault_root,
+            rel_path="small.md",
+            file_id=file_id,
+            file_size_bytes=int(row["size_bytes"]),
+            headings=headings,
+            chunking=ChunkingConfig(min_bytes=20, max_bytes=4000, split_strategy="paragraph_then_window", include_preamble=False),
+            embeddings_model="dummy",
+        )
+
+        assert len(no_merge) == 3
+        assert len(merged) < len(no_merge)
+        assert all((c.end_byte - c.start_byte) >= 20 for c in merged)
+    finally:
+        conn.close()
+
