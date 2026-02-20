@@ -79,6 +79,43 @@ def _window_split(
     return spans
 
 
+def _enforce_min_bytes(
+    spans: list[tuple[int, int]],
+    *,
+    min_bytes: int,
+    max_bytes: int,
+) -> list[tuple[int, int]]:
+    if min_bytes <= 0 or not spans:
+        return spans
+
+    out: list[tuple[int, int]] = []
+    i = 0
+    while i < len(spans):
+        s, e = spans[i]
+        # Prefer forward merge for tiny spans, while respecting max_bytes.
+        while (e - s) < min_bytes and (i + 1) < len(spans):
+            ns, ne = spans[i + 1]
+            if ns != e:
+                break
+            if (ne - s) > max_bytes:
+                break
+            e = ne
+            i += 1
+
+        # If still tiny, try backward merge into prior span when contiguous.
+        if (e - s) < min_bytes and out:
+            ps, pe = out[-1]
+            if pe == s and (e - ps) <= max_bytes:
+                out[-1] = (ps, e)
+                i += 1
+                continue
+
+        out.append((s, e))
+        i += 1
+
+    return out
+
+
 def _heading_path_for(headings: list[HeadingRow], idx: int) -> str:
     stack: list[tuple[int, str]] = []
     for j in range(0, idx + 1):
@@ -153,6 +190,12 @@ def plan_chunks_for_file(
                 final_spans.append((s, e))
             else:
                 final_spans.extend(_window_split(data, s, e, chunking.max_bytes))
+
+        final_spans = _enforce_min_bytes(
+            final_spans,
+            min_bytes=chunking.min_bytes,
+            max_bytes=chunking.max_bytes,
+        )
 
         for s, e in final_spans:
             chunk_bytes = data[s:e]
